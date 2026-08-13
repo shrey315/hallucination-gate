@@ -1,0 +1,27 @@
+[
+  {
+    "query": "What is the refund policy?",
+    "answer": "Customers can request a refund within 30 days of purchase.",
+    "context_chunks": [
+      "Our refund policy allows customers to request a full refund within 30 days of purchase."
+    ],
+    "model_type": "rag"
+  },
+  {
+    "query": "What is the refund policy?",
+    "answer": "Refunds are never allowed under any circumstances.",
+    "context_chunks": [
+      "Our refund policy allows customers to request a full refund within 30 days of purchase."
+    ],
+    "model_type": "rag"
+  },
+  {
+    "query": "Who founded the company?",
+    "answer": "The company was founded by Jane Doe in 2010.",
+    "context_chunks": [],
+    "kb_chunks": [
+      "Acme Corp was founded by Jane Doe in 2010 in San Francisco."
+    ],
+    "model_type": "fine_tuned"
+  }
+]

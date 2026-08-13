@@ -1,0 +1,168 @@
+# Bayesian Network for hallucination-controlled RAG/LLM evaluation
+# States: [low, medium, high] unless noted. model_type: [rag, fine_tuned]
+
+nodes:
+  evidence:
+    - query_relevance
+    - context_faithfulness
+    - entailment_score
+    - retrieval_quality
+    - completeness
+    - contradiction
+    - unsupported_claims
+    - visual_grounding
+    - numeric_consistency
+    - model_type
+  latent:
+    - groundedness
+    - hallucination_risk
+    - answer_quality
+    - retrieval_adequacy
+    - release_safety
+
+edges:
+  - [context_faithfulness, groundedness]
+  - [entailment_score, groundedness]
+  - [visual_grounding, groundedness]
+  - [unsupported_claims, hallucination_risk]
+  - [contradiction, hallucination_risk]
+  - [numeric_consistency, hallucination_risk]
+  - [query_relevance, answer_quality]
+  - [completeness, answer_quality]
+  - [groundedness, answer_quality]
+  - [hallucination_risk, answer_quality]
+  - [retrieval_quality, retrieval_adequacy]
+  - [model_type, retrieval_adequacy]
+  - [groundedness, release_safety]
+  - [hallucination_risk, release_safety]
+
+cpts:
+  query_relevance:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  context_faithfulness:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  entailment_score:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  retrieval_quality:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  completeness:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  contradiction:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  unsupported_claims:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  visual_grounding:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  numeric_consistency:
+    parents: []
+    values: [0.333, 0.333, 0.334]
+  model_type:
+    parents: []
+    states: [rag, fine_tuned]
+    values: [0.5, 0.5]
+
+  groundedness:
+    parents: [context_faithfulness, entailment_score, visual_grounding]
+    composite_groups:
+      0: [0.85, 0.12, 0.03]
+      1: [0.70, 0.22, 0.08]
+      2: [0.50, 0.35, 0.15]
+      3: [0.30, 0.40, 0.30]
+      4: [0.15, 0.35, 0.50]
+      5: [0.06, 0.24, 0.70]
+      6: [0.02, 0.10, 0.88]
+
+  hallucination_risk:
+    parents: [unsupported_claims, contradiction, numeric_consistency]
+    invert: [numeric_consistency]
+    composite_groups:
+      0: [0.80, 0.15, 0.05]
+      1: [0.70, 0.22, 0.08]
+      2: [0.55, 0.30, 0.15]
+      3: [0.35, 0.40, 0.25]
+      4: [0.18, 0.32, 0.50]
+      5: [0.08, 0.22, 0.70]
+      6: [0.03, 0.12, 0.85]
+
+  answer_quality:
+    parents: [query_relevance, completeness, groundedness, hallucination_risk]
+    invert: [hallucination_risk]
+    composite_groups:
+      0: [0.80, 0.15, 0.05]
+      1: [0.70, 0.22, 0.08]
+      2: [0.55, 0.30, 0.15]
+      3: [0.40, 0.38, 0.22]
+      4: [0.25, 0.45, 0.30]
+      5: [0.15, 0.40, 0.45]
+      6: [0.08, 0.32, 0.60]
+      7: [0.04, 0.21, 0.75]
+      8: [0.02, 0.13, 0.85]
+
+  retrieval_adequacy:
+    parents: [retrieval_quality, model_type]
+    values:
+      - [0.70, 0.25, 0.05]
+      - [0.85, 0.12, 0.03]
+      - [0.35, 0.40, 0.25]
+      - [0.55, 0.30, 0.15]
+      - [0.08, 0.32, 0.60]
+      - [0.15, 0.35, 0.50]
+
+  release_safety:
+    parents: [groundedness, hallucination_risk]
+    values:
+      - [0.55, 0.30, 0.15]  # low ground, low hall
+      - [0.72, 0.20, 0.08]  # low, med
+      - [0.88, 0.10, 0.02]  # low, high
+      - [0.30, 0.40, 0.30]  # med, low
+      - [0.45, 0.38, 0.17]  # med, med
+      - [0.70, 0.22, 0.08]  # med, high
+      - [0.06, 0.14, 0.80]  # high, low
+      - [0.18, 0.37, 0.45]  # high, med
+      - [0.50, 0.35, 0.15]  # high, high
+
+suggestions:
+  retrieval_quality:
+    low: "Add a reranker and increase top-k retrieval — retrieved context poorly matched the query."
+    medium: "Consider hybrid search (BM25 + vectors) to improve retrieval recall."
+  context_faithfulness:
+    low: "Strengthen grounding prompts and require citations before generating the final answer."
+    medium: "Review chunk boundaries — context may be partially relevant but not well utilized."
+  unsupported_claims:
+    high: "The hallucination gate dropped ungrounded claims. Fine-tune or prompt the model to cite evidence."
+    medium: "Add a post-generation verification step to flag unsupported statements."
+  contradiction:
+    high: "The answer was blocked because it contradicts the knowledge base. Refresh KB or add abstention."
+    medium: "Introduce answer abstention when KB evidence conflicts."
+  completeness:
+    low: "Increase context window or use multi-hop retrieval — the answer omits key query facets."
+    medium: "Decompose complex queries into sub-questions for fuller coverage."
+  query_relevance:
+    low: "The answer drifts from the user query — tighten prompt instructions on relevance."
+    medium: "Answer partially addresses the query — add explicit facet checklist in the prompt."
+  entailment_score:
+    low: "Context does not logically support the answer — verify retrieval and generation pipeline."
+  hallucination_risk:
+    high: "High hallucination risk — the gate will rewrite or abstain until claims are evidence-backed."
+  groundedness:
+    low: "Answer is poorly grounded — only release claims that cite KB, image, table, or document evidence."
+  retrieval_adequacy:
+    low: "Retrieval pipeline is inadequate for this query type — tune embeddings and chunk strategy."
+  visual_grounding:
+    low: "Image evidence does not support the answer — add OCR, captions, or a vision encoder."
+    medium: "Visual alignment is weak — require the model to describe only what is in the image."
+  numeric_consistency:
+    low: "Numeric values in the answer are not present in evidence — treat as hallucination."
+    medium: "Some figures are unverified — extract numbers from tables/docs before answering."
+  release_safety:
+    low: "Release safety is too low — do not show the raw model answer to users."
+  fine_tuned_kb_mismatch:
+    low: "Fine-tuned model output diverges from KB — route factual queries to RAG or refresh training data."

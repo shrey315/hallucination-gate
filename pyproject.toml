@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hallucination-gate"
+version = "0.4.0"
+description = "Generic hallucination gate for any RAG or fine-tuned LLM (text, image, PDF, OCR, tables, audio)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "hallucination_gate" }]
+keywords = ["hallucination", "rag", "llm", "bayesian", "grounding", "evaluation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "pgmpy>=0.1.26",
+    "sentence-transformers>=3.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "numpy>=1.26.0",
+    "pandas>=2.0",
+    "pypdf>=5.0.0",
+    "typer>=0.12.0",
+    "rich>=13.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27.0",
+    "build>=1.2",
+    "twine>=5.0",
+]
+ocr = [
+    "pillow>=10.0",
+    "pytesseract>=0.3.10",
+]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[project.urls]
+Homepage = "https://pypi.org/project/hallucination-gate/"
+
+[project.scripts]
+hallucination-gate = "bayesian_rag_evaluator.cli:app"
+hallucinate-gate = "bayesian_rag_evaluator.cli:app"
+rag-eval = "bayesian_rag_evaluator.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bayesian_rag_evaluator = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -1,0 +1,34 @@
+# Continuous score bin edges for discretization into {low, medium, high}
+bins:
+  query_relevance: [0.35, 0.65]
+  context_faithfulness: [0.35, 0.65]
+  entailment_score: [0.35, 0.65]
+  retrieval_quality: [0.35, 0.65]
+  completeness: [0.35, 0.65]
+  contradiction: [0.28, 0.55]
+  unsupported_claims: [0.20, 0.50]
+  visual_grounding: [0.35, 0.65]
+  numeric_consistency: [0.50, 0.85]
+
+# Posterior probability thresholds for verdict
+verdict:
+  pass_quality: 0.70
+  pass_groundedness: 0.65
+  max_hallucination_risk: 0.30
+  min_release_safety: 0.55
+
+# Hallucination gate — prefer abstention over ungrounded answers
+gate:
+  max_hallucination_risk: 0.28
+  min_groundedness: 0.62
+  min_release_safety: 0.55
+
+# Gap severity thresholds (posterior or evidence level)
+gap:
+  high: 0.40
+  medium: 0.60
+
+levels:
+  - low
+  - medium
+  - high

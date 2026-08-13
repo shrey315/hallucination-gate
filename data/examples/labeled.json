@@ -1,0 +1,75 @@
+[
+  {
+    "query": "What is the refund policy?",
+    "answer": "Customers can request a refund within 30 days of purchase.",
+    "context_chunks": [
+      "Our refund policy allows customers to request a full refund within 30 days of purchase."
+    ],
+    "model_type": "rag",
+    "labels": {
+      "query_relevance": "high",
+      "context_faithfulness": "high",
+      "entailment_score": "high",
+      "retrieval_quality": "high",
+      "completeness": "high",
+      "contradiction": "low",
+      "unsupported_claims": "low",
+      "model_type": "rag"
+    },
+    "latent_labels": {
+      "answer_quality": 0.88,
+      "groundedness": 0.90,
+      "hallucination_risk": 0.10,
+      "retrieval_adequacy": 0.85
+    }
+  },
+  {
+    "query": "What is the refund policy?",
+    "answer": "Refunds are never allowed under any circumstances.",
+    "context_chunks": [
+      "Our refund policy allows customers to request a full refund within 30 days of purchase."
+    ],
+    "model_type": "rag",
+    "labels": {
+      "query_relevance": "medium",
+      "context_faithfulness": "low",
+      "entailment_score": "low",
+      "retrieval_quality": "high",
+      "completeness": "medium",
+      "contradiction": "high",
+      "unsupported_claims": "high",
+      "model_type": "rag"
+    },
+    "latent_labels": {
+      "answer_quality": 0.25,
+      "groundedness": 0.15,
+      "hallucination_risk": 0.80,
+      "retrieval_adequacy": 0.70
+    }
+  },
+  {
+    "query": "Who founded the company?",
+    "answer": "The company was founded by Jane Doe in 2010.",
+    "context_chunks": [],
+    "kb_chunks": [
+      "Acme Corp was founded by Jane Doe in 2010 in San Francisco."
+    ],
+    "model_type": "fine_tuned",
+    "labels": {
+      "query_relevance": "high",
+      "context_faithfulness": "high",
+      "entailment_score": "high",
+      "retrieval_quality": "high",
+      "completeness": "high",
+      "contradiction": "low",
+      "unsupported_claims": "low",
+      "model_type": "fine_tuned"
+    },
+    "latent_labels": {
+      "answer_quality": 0.82,
+      "groundedness": 0.85,
+      "hallucination_risk": 0.12,
+      "retrieval_adequacy": 0.55
+    }
+  }
+]

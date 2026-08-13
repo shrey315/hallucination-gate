@@ -1,0 +1,245 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from functools import wraps
+from pathlib import Path
+from typing import Any, Literal
+
+from bayesian_rag_evaluator.adapters import normalize_context
+from bayesian_rag_evaluator.evaluator import DiagnosticEvaluator
+from bayesian_rag_evaluator.models.schemas import EvaluateRequest, EvaluateResponse, ModelType
+from hallucinate_gate.evidence import Evidence
+
+Mode = Literal["rag", "fine_tuned"]
+RetrieveFn = Callable[[str], Any]
+GenerateFn = Callable[..., Any]
+
+
+@dataclass
+class GatedAnswer:
+    """Safe output for the calling app. ``text`` is what users should see."""
+
+    text: str
+    released: bool
+    action: str
+    original: str
+    reason: str
+    request_id: str | None = None
+    latency_ms: float | None = None
+    claims: list[dict[str, Any]] = field(default_factory=list)
+    raw: EvaluateResponse | None = None
+
+    def __str__(self) -> str:
+        return self.text
+
+
+class HallucinationGate:
+    """Framework-agnostic gate for any RAG or fine-tuned generator.
+
+    It does not generate answers and does not depend on a dataset, vector DB,
+    or model vendor. You pass a query, the model answer, and whatever evidence
+    you have (retrieved chunks, KB text, images, PDFs, OCR, tables, audio).
+    """
+
+    def __init__(
+        self,
+        mode: Mode = "rag",
+        *,
+        strict: bool = True,
+        use_heuristic: bool | None = None,
+        learned_model_path: str | Path | None = None,
+    ) -> None:
+        self.mode = mode
+        self.strict = strict
+        self._evaluator = DiagnosticEvaluator(
+            use_heuristic=use_heuristic,
+            learned_model_path=Path(learned_model_path) if learned_model_path else None,
+        )
+
+    def check(
+        self,
+        query: str,
+        answer: str,
+        context: Any = None,
+        kb: Any = None,
+        *,
+        evidence: Evidence | None = None,
+        mode: Mode | None = None,
+        images: Any = None,
+        tables: Any = None,
+        documents: Any = None,
+        audio: Any = None,
+        pdfs: list[str] | None = None,
+        strict: bool | None = None,
+        debug: bool = False,
+    ) -> GatedAnswer:
+        """Verify an existing model answer against caller-supplied evidence."""
+        ev = evidence or Evidence(
+            context=context,
+            kb=kb,
+            images=images or [],
+            tables=tables or [],
+            documents=documents,
+            pdfs=pdfs,
+            audio=audio,
+        )
+        if context is not None and evidence is not None:
+            ev.context = context
+        if kb is not None and evidence is not None:
+            ev.kb = kb
+
+        request = EvaluateRequest(
+            query=query,
+            answer=answer,
+            context_chunks=normalize_context(ev.context),
+            kb_chunks=normalize_context(ev.kb),
+            images=ev.image_inputs(),
+            tables=ev.table_inputs(),
+            documents=normalize_context(ev.documents),
+            audio_transcripts=normalize_context(ev.audio),
+            pdf_paths=ev.pdfs or [],
+            model_type=ModelType(mode or self.mode),
+            strict=self.strict if strict is None else strict,
+        )
+        result = self._evaluator.evaluate(request)
+        return GatedAnswer(
+            text=result.safe_answer,
+            released=result.gate.released,
+            action=result.gate.action.value,
+            original=result.gate.original_answer,
+            reason=result.gate.reason,
+            request_id=result.request_id,
+            latency_ms=result.latency_ms,
+            claims=[c.model_dump(mode="json") for c in result.claims],
+            raw=result if debug else None,
+        )
+
+    def run(
+        self,
+        query: str,
+        generate: GenerateFn,
+        *,
+        retrieve: RetrieveFn | None = None,
+        context: Any = None,
+        kb: Any = None,
+        evidence: Evidence | None = None,
+        mode: Mode | None = None,
+        **generate_kwargs: Any,
+    ) -> GatedAnswer:
+        """Your retrieve (optional) → your generate → this gate."""
+        resolved_mode = mode or self.mode
+        if retrieve is not None and context is None:
+            context = retrieve(query)
+        answer = _call_generate(generate, query, context, kb, generate_kwargs)
+        return self.check(
+            query,
+            answer,
+            context=context,
+            kb=kb,
+            evidence=evidence,
+            mode=resolved_mode,
+        )
+
+    def wrap(
+        self,
+        generate: GenerateFn,
+        *,
+        retrieve: RetrieveFn | None = None,
+        kb: Any = None,
+        mode: Mode | None = None,
+        text_only: bool = True,
+    ) -> Callable[..., str | GatedAnswer]:
+        """Drop-in wrapper around an existing generate(query, ...) function."""
+
+        def wrapped(query: str, *args: Any, context: Any = None, **kwargs: Any):
+            extra_context = args[0] if args else context
+            result = self.run(
+                query,
+                lambda q, **kw: generate(q, *args, **kw) if args else generate(q, **kwargs),
+                retrieve=retrieve if extra_context is None else None,
+                context=extra_context,
+                kb=kb,
+                mode=mode,
+            )
+            return result.text if text_only else result
+
+        return wrapped
+
+    def protect(self, fn: GenerateFn | None = None, *, text_only: bool = True):
+        """Decorator for any RAG/fine-tune function.
+
+        The function may return a string, ``(answer, context)``,
+        ``(answer, context, kb)``, or a dict with those keys.
+        """
+
+        def decorator(func: GenerateFn) -> Callable[..., str | GatedAnswer]:
+            @wraps(func)
+            def inner(query: str, *args: Any, **kwargs: Any):
+                output = func(query, *args, **kwargs)
+                answer, context, kb = _unpack_output(output)
+                result = self.check(query, answer, context=context, kb=kb)
+                return result.text if text_only else result
+
+            return inner
+
+        if fn is not None:
+            return decorator(fn)
+        return decorator
+
+
+def _call_generate(
+    generate: GenerateFn,
+    query: str,
+    context: Any,
+    kb: Any,
+    extra: dict[str, Any],
+) -> str:
+    import inspect
+
+    try:
+        params = inspect.signature(generate).parameters
+    except (TypeError, ValueError):
+        params = {}
+    kwargs = dict(extra)
+    if "context" in params and context is not None:
+        kwargs.setdefault("context", context)
+    if "kb" in params and kb is not None:
+        kwargs.setdefault("kb", kb)
+    if "documents" in params and context is not None:
+        kwargs.setdefault("documents", context)
+    try:
+        output = generate(query, **kwargs)
+    except TypeError:
+        output = generate(query)
+    answer, _, _ = _unpack_output(output)
+    return answer
+
+
+def _unpack_output(output: Any) -> tuple[str, Any, Any]:
+    if isinstance(output, GatedAnswer):
+        return output.original or output.text, None, None
+    if isinstance(output, str):
+        return output, None, None
+    if isinstance(output, dict):
+        answer = (
+            output.get("answer")
+            or output.get("text")
+            or output.get("output")
+            or output.get("response")
+            or ""
+        )
+        context = (
+            output.get("context")
+            or output.get("documents")
+            or output.get("sources")
+            or output.get("chunks")
+        )
+        kb = output.get("kb") or output.get("knowledge_base")
+        return str(answer), context, kb
+    if isinstance(output, (tuple, list)) and output:
+        answer = str(output[0])
+        context = output[1] if len(output) > 1 else None
+        kb = output[2] if len(output) > 2 else None
+        return answer, context, kb
+    return str(output), None, None
