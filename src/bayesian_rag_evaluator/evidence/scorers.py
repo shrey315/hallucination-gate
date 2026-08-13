@@ -4,8 +4,10 @@ from bayesian_rag_evaluator.claims.extractor import extract_claims
 from bayesian_rag_evaluator.evidence.backends import (
     EmbeddingBackend,
     NLIBackend,
+    content_tokens,
     token_set,
 )
+from bayesian_rag_evaluator.evidence.synonyms import covers_token
 
 
 def split_claims(text: str) -> list[str]:
@@ -47,15 +49,12 @@ def score_retrieval_quality(
 
 
 def score_completeness(query: str, answer: str) -> float:
-    query_tokens = token_set(query)
+    query_tokens = content_tokens(query) or token_set(query)
     answer_tokens = token_set(answer)
     if not query_tokens:
         return 0.0
-    content_tokens = {t for t in query_tokens if len(t) > 3}
-    if not content_tokens:
-        content_tokens = query_tokens
-    covered = sum(1 for t in content_tokens if t in answer_tokens)
-    base = covered / len(content_tokens)
+    covered = sum(1 for t in query_tokens if covers_token(t, answer_tokens))
+    base = covered / len(query_tokens)
     if len(answer.split()) < 8:
         base *= 0.85
     return max(0.0, min(1.0, base))

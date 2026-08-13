@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hallucination-gate"
-version = "0.4.0"
-description = "Generic hallucination gate for any RAG or fine-tuned LLM (text, image, PDF, OCR, tables, audio)"
+version = "0.6.0"
+description = "Conservative grounding gate for RAG and fine-tuned LLMs. Blocks answers that are not supported by caller-supplied evidence."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -50,7 +50,7 @@ api = [
 ]
 
 [project.urls]
-Homepage = "https://pypi.org/project/hallucination-gate/"
+Homepage = "https://github.com/shrey315/hallucination-gate"
 
 [project.scripts]
 hallucination-gate = "bayesian_rag_evaluator.cli:app"
@@ -66,3 +66,6 @@ bayesian_rag_evaluator = ["config/*.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "neural: downloads or requires sentence-transformers models",
+]

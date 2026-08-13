@@ -1,6 +1,8 @@
 # hallucination-gate
 
-Generic Python library that sits in front of **any** RAG or fine-tuned generator. It does not train models, does not ship a dataset, and does not care which vector store or LLM you use.
+A **conservative grounding gate** for RAG and fine-tuned generators. It does not decide whether an answer is true in the world. It decides whether the answer is **supported by the evidence you pass in**, then **passes**, **rewrites**, or **abstains**.
+
+False release is treated as the failure mode that matters. If a rewrite would no longer answer the question, the gate abstains.
 
 ```python
 from hallucination_gate import HallucinationGate, Evidence
@@ -16,11 +18,9 @@ return result.text  # show this to users
 ```
 
 ```python
-# Fine-tuned
 gate = HallucinationGate(mode="fine_tuned")
 result = gate.check(query, answer, kb=your_knowledge_base)
 
-# Image / OCR / PDF / table / audio
 result = gate.check(query, answer, evidence=Evidence.from_image(path="photo.jpg", ocr="..."))
 result = gate.check(query, answer, evidence=Evidence.from_pdf("policy.pdf"))
 ```
@@ -33,50 +33,52 @@ def my_rag(query: str):
     return answer, docs
 ```
 
-## Install
+## What this is (and is not)
 
-After the package is on PyPI:
+| It does | It does not |
+|---|---|
+| Check claims against *your* retrieved chunks / KB / OCR / PDF text | Know if the KB itself is wrong |
+| Abstain on contradiction, invented entities, and number clashes | Read fine-tune weights |
+| Drop ungrounded sentences, then abstain if the remainder misses the query | Replace an LLM-as-judge on subtle reasoning, code, or math proofs |
+| Work with any stack that can give you `query`, `answer`, `evidence` | Guarantee multilingual performance equal to English without swapping models |
+
+Default neural backends: multilingual MiniLM + DeBERTa NLI. Override with `embed_model=`, `nli_model=`, or `RAG_EVAL_EMBED_MODEL` / `RAG_EVAL_NLI_MODEL`.
+
+Release is decided by **claim grounding**, not by the Bayesian network. BN scores are diagnostics only.
+
+Set `RAG_EVAL_HEURISTIC=1` for CI / offline (token coverage, no model download). Optional: `HALLUCINATION_GATE_JUDGE=1` plus `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to escalate **uncertain** claims only.
+
+## Eval
+
+Held-out domains (HR, API, vaccines, Redis, K8s) report **false release** and **over-refusal**:
+
+```bash
+pip install -e ".[dev]"
+set RAG_EVAL_HEURISTIC=1
+pytest -q -m "not neural"
+hallucination-gate eval-heldout
+```
+
+## Install
 
 ```bash
 pip install hallucination-gate
 ```
 
-From GitHub (works as soon as the repo is public):
+From GitHub:
 
 ```bash
-pip install git+https://github.com/YOUR_GITHUB_USERNAME/hallucination-gate.git
+pip install git+https://github.com/shrey315/hallucination-gate.git
 ```
 
 From this folder:
 
 ```bash
-pip install -e .
+pip install -e ".[dev]"
+pytest -q
 ```
 
-Set `RAG_EVAL_HEURISTIC=1` for a lightweight scorer (no model download).
-
-## Publish to GitHub then PyPI
-
-PyPI Trusted Publishing expects a **public GitHub repo**. Push this project, then connect it on PyPI.
-
-```bash
-cd "E:\Baysian Optimization"
-git init
-git add .
-git commit -m "Initial hallucination-gate library"
-gh repo create hallucination-gate --public --source=. --remote=origin --push
-```
-
-On [pypi.org](https://pypi.org): account → Publishing → GitHub, with:
-
-- Owner: your GitHub username
-- Repository: `hallucination-gate`
-- Workflow: `publish.yml`
-- Environment: leave empty unless you created one
-
-Then create a GitHub Release tagged `v0.4.0`. The workflow in `.github/workflows/publish.yml` builds and uploads to PyPI. After that, `pip install hallucination-gate` works for everyone.
-
-## HTTP API (optional)
+## HTTP API
 
 ```bash
 uvicorn bayesian_rag_evaluator.api.main:app --reload --port 8000

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from pgmpy.estimators import BayesianEstimator, MaximumLikelihoodEstimator
+from pgmpy.estimators import BayesianEstimator
 
 from bayesian_rag_evaluator.bn.discretize import PROJECT_ROOT, load_yaml
 from bayesian_rag_evaluator.bn.network import build_network
@@ -81,34 +81,19 @@ def learn_cpds_from_data(
     df = examples_to_dataframe(examples)
     model = build_network(structure_path)
 
-    has_latent = all(
-        col in df.columns
-        for col in (
-            "groundedness",
-            "hallucination_risk",
-            "answer_quality",
-            "retrieval_adequacy",
-            "release_safety",
-        )
-    )
+    if df.empty:
+        raise ValueError("Cannot learn CPTs from an empty labeled set")
 
-    try:
-        estimator: Any
-        if has_latent and len(df) >= 10:
-            estimator = BayesianEstimator(model, df)
-            parameters = estimator.get_parameters(
-                prior_type="BDeu", equivalent_sample_size=equivalent_sample_size
-            )
-        else:
-            estimator = MaximumLikelihoodEstimator(model, df)
-            parameters = estimator.get_parameters()
-        model.cpds = []
-        model.add_cpds(*parameters)
-        if not model.check_model():
-            raise ValueError("Learned model failed validation")
-        return model
-    except Exception:
-        return build_network(structure_path)
+    estimator = BayesianEstimator(model, df)
+    parameters = estimator.get_parameters(
+        prior_type="BDeu",
+        equivalent_sample_size=max(equivalent_sample_size, 5),
+    )
+    model.cpds = []
+    model.add_cpds(*parameters)
+    if not model.check_model():
+        raise ValueError("Learned model failed validation")
+    return model
 
 
 def tune_thresholds_from_labels(

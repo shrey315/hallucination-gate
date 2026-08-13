@@ -49,12 +49,16 @@ class HallucinationGate:
         strict: bool = True,
         use_heuristic: bool | None = None,
         learned_model_path: str | Path | None = None,
+        embed_model: str | None = None,
+        nli_model: str | None = None,
     ) -> None:
         self.mode = mode
         self.strict = strict
         self._evaluator = DiagnosticEvaluator(
             use_heuristic=use_heuristic,
             learned_model_path=Path(learned_model_path) if learned_model_path else None,
+            embed_model=embed_model,
+            nli_model=nli_model,
         )
 
     def check(

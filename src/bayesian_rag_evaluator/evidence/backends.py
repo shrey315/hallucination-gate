@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from abc import ABC, abstractmethod
 
@@ -7,13 +8,122 @@ import numpy as np
 
 from bayesian_rag_evaluator.evidence.cache import EMBED_CACHE, NLI_CACHE, pair_key, text_key
 
+DEFAULT_EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+DEFAULT_NLI_MODEL = "cross-encoder/nli-deberta-v3-small"
+
+_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+
+STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "to",
+        "of",
+        "in",
+        "on",
+        "for",
+        "and",
+        "or",
+        "but",
+        "with",
+        "by",
+        "from",
+        "at",
+        "as",
+        "it",
+        "this",
+        "that",
+        "what",
+        "who",
+        "how",
+        "when",
+        "where",
+        "which",
+        "can",
+        "may",
+        "will",
+        "do",
+        "does",
+        "did",
+        "not",
+        "no",
+    }
+)
+
 
 def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
+def _is_cjk_token(token: str) -> bool:
+    return any(
+        "\u4e00" <= ch <= "\u9fff"
+        or "\u3040" <= ch <= "\u30ff"
+        or "\uac00" <= ch <= "\ud7af"
+        for ch in token
+    )
+
+
+def _stem(token: str) -> str:
+    if _is_cjk_token(token) or len(token) <= 4:
+        return token
+    if token.endswith("ing") and len(token) > 6:
+        return token[:-3]
+    if token.endswith("ed") and len(token) > 6:
+        return token[:-2]
+    if token.endswith("es") and len(token) > 5:
+        return token[:-2]
+    if token.endswith("s") and len(token) > 4:
+        return token[:-1]
+    return token
+
+
+def _canonical(token: str) -> str:
+    from bayesian_rag_evaluator.evidence.synonyms import synonym_set
+
+    if len(synonym_set(token)) > 1:
+        return token
+    return _stem(token)
+
+
 def token_set(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", normalize_text(text)))
+    """Unicode word tokens with light English stemming. Keeps CJK characters."""
+    norm = normalize_text(text)
+    toks = _WORD.findall(norm)
+    if not toks:
+        toks = [ch for ch in norm if not ch.isspace()]
+    return {_canonical(tok) for tok in toks if tok}
+
+
+def content_tokens(text: str) -> set[str]:
+    toks = token_set(text)
+    kept = set()
+    for tok in toks:
+        if tok in STOPWORDS:
+            continue
+        if len(tok) <= 2 and not _is_cjk_token(tok):
+            continue
+        kept.add(tok)
+    return kept or toks
+
+
+def token_coverage(claim: str, evidence: str) -> float:
+    """Fraction of claim content tokens attested in evidence, with synonym matches."""
+    from bayesian_rag_evaluator.evidence.synonyms import covers_token
+
+    claim_toks = content_tokens(claim)
+    if not claim_toks:
+        return 0.0
+    evidence_toks = token_set(evidence)
+    hits = sum(1 for tok in claim_toks if covers_token(tok, evidence_toks))
+    return hits / len(claim_toks)
 
 
 def jaccard_similarity(a: str, b: str) -> float:
@@ -42,7 +152,11 @@ class HeuristicEmbeddingBackend(EmbeddingBackend):
     """Word-overlap similarity for tests and offline use."""
 
     def similarity(self, a: str, b: str) -> float:
-        return jaccard_similarity(a, b)
+        return max(
+            jaccard_similarity(a, b),
+            token_coverage(a, b),
+            token_coverage(b, a),
+        )
 
     def encode_many(self, texts: list[str]) -> np.ndarray:
         vocab: dict[str, int] = {}
@@ -70,14 +184,19 @@ class HeuristicEmbeddingBackend(EmbeddingBackend):
 
 
 class SentenceTransformerBackend(EmbeddingBackend):
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
-        from sentence_transformers import SentenceTransformer
-        from sentence_transformers.util import cos_sim
+    def __init__(self, model_name: str = DEFAULT_EMBED_MODEL) -> None:
+        self.model_name = model_name
+        self._model = None
 
-        self._model = SentenceTransformer(model_name)
-        self._cos_sim = cos_sim
+    def _load(self):
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+
+            self._model = SentenceTransformer(self.model_name)
+        return self._model
 
     def encode_many(self, texts: list[str]) -> np.ndarray:
+        self._load()
         missing: list[tuple[int, str]] = []
         vectors: list[np.ndarray | None] = [None] * len(texts)
         for i, text in enumerate(texts):
@@ -131,12 +250,8 @@ class NLIBackend(ABC):
 class HeuristicNLIBackend(NLIBackend):
     def entailment_prob(self, premise: str, hypothesis: str) -> float:
         overlap = jaccard_similarity(premise, hypothesis)
-        hyp_tokens = token_set(hypothesis)
-        prem_tokens = token_set(premise)
-        if not hyp_tokens:
-            return 0.0
-        coverage = len(hyp_tokens & prem_tokens) / len(hyp_tokens)
-        return max(0.0, min(1.0, 0.5 * overlap + 0.5 * coverage))
+        coverage = token_coverage(hypothesis, premise)
+        return max(0.0, min(1.0, 0.35 * overlap + 0.65 * coverage))
 
     def contradiction_prob(self, premise: str, hypothesis: str) -> float:
         from bayesian_rag_evaluator.evidence.multimodal import extract_numbers
@@ -196,11 +311,17 @@ class HeuristicNLIBackend(NLIBackend):
 
 
 class CrossEncoderNLIBackend(NLIBackend):
-    def __init__(self, model_name: str = "cross-encoder/nli-deberta-v3-small") -> None:
-        from sentence_transformers import CrossEncoder
-
-        self._model = CrossEncoder(model_name)
+    def __init__(self, model_name: str = DEFAULT_NLI_MODEL) -> None:
+        self.model_name = model_name
+        self._model = None
         self._labels = ["contradiction", "entailment", "neutral"]
+
+    def _load(self):
+        if self._model is None:
+            from sentence_transformers import CrossEncoder
+
+            self._model = CrossEncoder(self.model_name)
+        return self._model
 
     def _decode_logits(self, logits) -> dict[str, float]:
         if hasattr(logits, "ndim") and getattr(logits, "ndim", 1) == 2:
@@ -221,6 +342,7 @@ class CrossEncoderNLIBackend(NLIBackend):
             else:
                 missing.append((i, pair))
         if missing:
+            self._load()
             logits = self._model.predict(
                 [p for _, p in missing],
                 batch_size=32,
@@ -252,13 +374,19 @@ def _softmax(x):
     return e / e.sum()
 
 
-def create_embedding_backend(use_heuristic: bool = False) -> EmbeddingBackend:
+def create_embedding_backend(
+    use_heuristic: bool = False, model_name: str | None = None
+) -> EmbeddingBackend:
     if use_heuristic:
         return HeuristicEmbeddingBackend()
-    return SentenceTransformerBackend()
+    name = model_name or os.getenv("RAG_EVAL_EMBED_MODEL") or DEFAULT_EMBED_MODEL
+    return SentenceTransformerBackend(name)
 
 
-def create_nli_backend(use_heuristic: bool = False) -> NLIBackend:
+def create_nli_backend(
+    use_heuristic: bool = False, model_name: str | None = None
+) -> NLIBackend:
     if use_heuristic:
         return HeuristicNLIBackend()
-    return CrossEncoderNLIBackend()
+    name = model_name or os.getenv("RAG_EVAL_NLI_MODEL") or DEFAULT_NLI_MODEL
+    return CrossEncoderNLIBackend(name)

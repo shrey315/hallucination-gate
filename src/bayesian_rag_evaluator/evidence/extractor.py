@@ -37,7 +37,12 @@ from bayesian_rag_evaluator.models.schemas import (
 
 
 class EvidenceExtractor:
-    def __init__(self, use_heuristic: bool | None = None) -> None:
+    def __init__(
+        self,
+        use_heuristic: bool | None = None,
+        embed_model: str | None = None,
+        nli_model: str | None = None,
+    ) -> None:
         if use_heuristic is None:
             use_heuristic = os.getenv("RAG_EVAL_HEURISTIC", "").lower() in {
                 "1",
@@ -45,8 +50,8 @@ class EvidenceExtractor:
                 "yes",
             }
         self._use_heuristic = use_heuristic
-        self._embedder = create_embedding_backend(use_heuristic)
-        self._nli = create_nli_backend(use_heuristic)
+        self._embedder = create_embedding_backend(use_heuristic, model_name=embed_model)
+        self._nli = create_nli_backend(use_heuristic, model_name=nli_model)
 
     def store_from_request(self, request: EvaluateRequest) -> list[EvidenceUnit]:
         images = [enrich_image(img.model_copy()) for img in request.images]
@@ -67,7 +72,10 @@ class EvidenceExtractor:
         answer: str,
         units: list[EvidenceUnit],
     ) -> list[ClaimResult]:
-        return verify_claims(answer, units, self._embedder, self._nli)
+        from bayesian_rag_evaluator.judge import refine_uncertain_claims
+
+        claims = verify_claims(answer, units, self._embedder, self._nli)
+        return refine_uncertain_claims(claims, units)
 
     def extract(
         self,

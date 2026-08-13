@@ -35,12 +35,12 @@ def test_calibrate_from_gold_examples(tmp_path):
 
 
 def test_gold_metrics_false_release_is_low():
-    examples = generate_gold_examples(n=60, seed=42)
+    examples = generate_gold_examples(n=90, seed=42)
     evaluator = DiagnosticEvaluator(use_heuristic=True)
     metrics = evaluate_gold_set(examples, evaluator=evaluator)
-    assert metrics.n == 60
-    assert metrics.false_release_rate <= 0.35
-    assert metrics.precision_release >= 0.5
+    assert metrics.n == 90
+    assert metrics.false_release_rate <= 0.01
+    assert metrics.precision_release >= 0.90
 
 
 def test_batched_claim_verification_matches_single_path():

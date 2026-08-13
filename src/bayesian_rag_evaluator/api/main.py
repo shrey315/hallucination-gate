@@ -30,9 +30,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 app = FastAPI(
     title="Hallucination Gate — Bayesian RAG/LLM Evaluator",
-    version="0.3.0",
+    version="0.6.0",
     description=(
-        "Production hallucination gate. Public /v1/answer returns only safe_answer. "
+        "Production grounding gate. Public /v1/answer returns only safe_answer. "
         "Internal /evaluate requires an API key when RAG_EVAL_API_KEY is set."
     ),
 )
@@ -99,7 +99,12 @@ app.add_middleware(AccessLogMiddleware)
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    heuristic = os.getenv("RAG_EVAL_HEURISTIC", "").lower() in {"1", "true", "yes"}
+    return {
+        "status": "ok",
+        "version": "0.6.0",
+        "backend": "heuristic" if heuristic else "neural",
+    }
 
 
 @app.get("/metrics")

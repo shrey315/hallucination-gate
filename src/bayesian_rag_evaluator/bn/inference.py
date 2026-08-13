@@ -49,7 +49,11 @@ class BayesianInferenceEngine:
 
 
 def _expected_high_prob(factor) -> float:
-    """Convert factor distribution to scalar: P(high) + 0.5*P(medium)."""
+    """Convert factor distribution to a fusion score: P(high) + 0.5*P(medium).
+
+These are not calibrated probabilities of truth. They are discrete-BN
+fusion scores used as a second veto beside claim-level grounding.
+"""
     var = factor.variables[0]
     states = list(factor.state_names[var])
     probs = {s: float(factor.values.flatten()[i]) for i, s in enumerate(states)}

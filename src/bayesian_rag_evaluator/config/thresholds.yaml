@@ -10,20 +10,21 @@ bins:
   visual_grounding: [0.35, 0.65]
   numeric_consistency: [0.50, 0.85]
 
-# Posterior probability thresholds for verdict
+# Posterior fusion-score thresholds for verdict (not calibrated probabilities)
 verdict:
   pass_quality: 0.70
-  pass_groundedness: 0.65
-  max_hallucination_risk: 0.30
-  min_release_safety: 0.55
+  pass_groundedness: 0.68
+  max_hallucination_risk: 0.25
+  min_release_safety: 0.62
 
-# Hallucination gate — prefer abstention over ungrounded answers
+# Prefer abstention over a false release
 gate:
-  max_hallucination_risk: 0.28
-  min_groundedness: 0.62
-  min_release_safety: 0.55
+  max_hallucination_risk: 0.22
+  min_groundedness: 0.70
+  min_release_safety: 0.65
+  min_rewrite_completeness: 0.28
+  min_rewrite_overlap: 0.16
 
-# Gap severity thresholds (posterior or evidence level)
 gap:
   high: 0.40
   medium: 0.60

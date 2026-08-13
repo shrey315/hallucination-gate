@@ -3,7 +3,19 @@ from __future__ import annotations
 import numpy as np
 
 from bayesian_rag_evaluator.claims.extractor import extract_claims
-from bayesian_rag_evaluator.evidence.backends import EmbeddingBackend, NLIBackend
+from bayesian_rag_evaluator.claims.policy import (
+    decide_status,
+    extra_distinctive_tokens,
+    extra_entity_penalty,
+    fused_support,
+    literals_agree,
+    numbers_agree,
+)
+from bayesian_rag_evaluator.evidence.backends import (
+    EmbeddingBackend,
+    NLIBackend,
+    token_coverage,
+)
 from bayesian_rag_evaluator.models.schemas import (
     ClaimResult,
     ClaimVerdict,
@@ -11,9 +23,6 @@ from bayesian_rag_evaluator.models.schemas import (
     MediaType,
 )
 
-SUPPORT_THRESHOLD = 0.48
-CONTRADICTION_THRESHOLD = 0.55
-UNCERTAIN_BAND = 0.38
 DEFAULT_TOP_K = 8
 
 
@@ -52,30 +61,55 @@ def verify_claims(
 
     nli_rows = nli.predict_batch(pairs) if pairs else []
 
-    from bayesian_rag_evaluator.evidence.multimodal import extract_numbers
-
     best_support = [0.0] * len(claims)
     best_contradiction = [0.0] * len(claims)
+    best_entail = [0.0] * len(claims)
+    best_sim = [0.0] * len(claims)
+    best_cov = [0.0] * len(claims)
+    best_nums: list[bool | None] = [None] * len(claims)
+    best_lits: list[bool | None] = [None] * len(claims)
+    best_extra = [0] * len(claims)
     best_j = [-1] * len(claims)
+
     for (i, j), row, sim_ij in zip(
         pair_index, nli_rows, [sim[i, j] for i, j in pair_index], strict=True
     ):
-        support = max(float(row["entailment"]), 0.85 * float(sim_ij))
-        contra = float(row["contradiction"])
-        claim_nums = extract_numbers(claims[i])
-        unit_nums = extract_numbers(unit_texts[j])
-        if claim_nums and unit_nums and not any(n in unit_nums for n in claim_nums):
+        coverage = token_coverage(claims[i], unit_texts[j])
+        nums_ok = numbers_agree(claims[i], unit_texts[j])
+        lits_ok = literals_agree(claims[i], unit_texts[j])
+        extra_n = len(extra_distinctive_tokens(claims[i], unit_texts[j]))
+        contra = float(row["contradiction"]) + extra_entity_penalty(
+            claims[i], unit_texts[j]
+        )
+        contra = min(1.0, contra)
+        entail = float(row["entailment"])
+        if nums_ok is False or lits_ok is False:
             contra = max(contra, 0.78)
-            support = min(support, 0.35)
+            entail = min(entail, 0.30)
+        support = fused_support(entail, float(sim_ij), coverage)
         if support > best_support[i]:
             best_support[i] = support
+            best_entail[i] = entail
+            best_sim[i] = float(sim_ij)
+            best_cov[i] = coverage
+            best_nums[i] = nums_ok
+            best_lits[i] = lits_ok
+            best_extra[i] = extra_n
             best_j[i] = j
         if contra > best_contradiction[i]:
             best_contradiction[i] = contra
 
     results: list[ClaimResult] = []
     for i, claim in enumerate(claims):
-        status = _status(best_support[i], best_contradiction[i])
+        status = decide_status(
+            best_entail[i],
+            best_sim[i],
+            best_cov[i],
+            best_contradiction[i],
+            best_nums[i],
+            extra_distinctive=best_extra[i],
+            literals_ok=best_lits[i],
+        )
         src = units[best_j[i]] if best_j[i] >= 0 else None
         results.append(
             ClaimResult(
@@ -89,16 +123,6 @@ def verify_claims(
             )
         )
     return results
-
-
-def _status(support: float, contradiction: float) -> ClaimVerdict:
-    if contradiction >= CONTRADICTION_THRESHOLD and contradiction > support:
-        return ClaimVerdict.CONTRADICTED
-    if support >= SUPPORT_THRESHOLD and support > contradiction:
-        return ClaimVerdict.SUPPORTED
-    if support >= UNCERTAIN_BAND:
-        return ClaimVerdict.UNCERTAIN
-    return ClaimVerdict.UNSUPPORTED
 
 
 def unsupported_ratio(claims: list[ClaimResult]) -> float:
@@ -116,3 +140,8 @@ def max_contradiction(claims: list[ClaimResult]) -> float:
     if not claims:
         return 0.0
     return max(c.contradiction_score for c in claims)
+
+
+# Back-compat for tests that imported these names.
+SUPPORT_THRESHOLD = MIN_SUPPORT_COVERAGE = 0.72
+UNCERTAIN_BAND = 0.38

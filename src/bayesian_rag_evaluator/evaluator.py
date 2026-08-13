@@ -30,10 +30,16 @@ class DiagnosticEvaluator:
         structure_path: Path | None = None,
         thresholds_path: Path | None = None,
         learned_model_path: Path | None = None,
+        embed_model: str | None = None,
+        nli_model: str | None = None,
     ) -> None:
         self._thresholds_path = thresholds_path or DEFAULT_THRESHOLDS
         self._thresholds = load_yaml(self._thresholds_path)
-        self._evidence = EvidenceExtractor(use_heuristic=use_heuristic)
+        self._evidence = EvidenceExtractor(
+            use_heuristic=use_heuristic,
+            embed_model=embed_model,
+            nli_model=nli_model,
+        )
         model = None
         if learned_model_path and learned_model_path.exists():
             model = load_learned_model(learned_model_path)
@@ -67,6 +73,7 @@ class DiagnosticEvaluator:
             posteriors=posteriors,
             strict=request.strict,
             thresholds_path=self._thresholds_path,
+            query=request.query,
         )
         gaps = identify_gaps(discretized, posteriors, self._thresholds_path)
         suggestions = generate_suggestions(

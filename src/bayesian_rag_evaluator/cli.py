@@ -14,6 +14,7 @@ from bayesian_rag_evaluator.bn.calibration import (
     tune_thresholds_from_labels,
 )
 from bayesian_rag_evaluator.data_gen.gold import generate_gold_examples, gold_to_labeled, write_gold_jsonl
+from bayesian_rag_evaluator.data_gen.heldout import heldout_examples
 from bayesian_rag_evaluator.evaluator import DiagnosticEvaluator
 from bayesian_rag_evaluator.metrics.gold import evaluate_gold_set
 from bayesian_rag_evaluator.models.schemas import EvaluateRequest, ImageInput, ModelType
@@ -135,6 +136,14 @@ def calibrate_cmd(
     )
     console.print(f"Suggested threshold bins: {thresholds.get('bins', {})}")
     console.print(f"Saved learned network to {output_model}")
+
+
+@app.command("eval-heldout")
+def eval_heldout_cmd() -> None:
+    """Report false-release and over-refusal on the held-out domain set."""
+    evaluator = DiagnosticEvaluator(use_heuristic=True)
+    metrics = evaluate_gold_set(heldout_examples(), evaluator=evaluator)
+    console.print_json(json.dumps(metrics.as_dict()))
 
 
 @app.command("eval-gold")
