@@ -7,7 +7,8 @@ False release is treated as the failure mode that matters. If a rewrite would no
 ```python
 from hallucination_gate import HallucinationGate, Evidence
 
-gate = HallucinationGate()  # or mode="fine_tuned"
+gate = HallucinationGate()  # neural backends (production default)
+# gate = HallucinationGate(use_heuristic=True)  # CI / offline smoke only
 
 result = gate.check(
     query=user_query,
@@ -16,6 +17,8 @@ result = gate.check(
 )
 return result.text  # show this to users
 ```
+
+Each claim is scored **against individual chunks**, then soft-OR aggregated: a supporting chunk wins even if a neighbor has unrelated numbers. Contradiction only counts from *aligned* chunks (enough lexical/semantic overlap with the claim).
 
 ```python
 gate = HallucinationGate(mode="fine_tuned")
@@ -33,6 +36,32 @@ def my_rag(query: str):
     return answer, docs
 ```
 
+## What evidence to pass
+
+Pass the chunks that *should* ground the answer. Typical RAG top-k is fine now that scoring is per-chunk, but garbage neighbors still waste work and can create borderline UNCERTAIN hits.
+
+| Pattern | When |
+|---|---|
+| Full retriever top-k | Default. Claim↔chunk alignment handles mixed neighbors. |
+| Answer-aligned / reranked top-k | Best production default — keep chunks that cite the same entities/numbers as the draft answer. |
+| Citation-level evidence | If the generator emits citations, pass only those cited chunks. |
+| Top-1 only | Debugging / demos; too brittle for real retrieval. |
+
+Do **not** concatenate all chunks into one string before calling `check` — pass a `list[str]` (or documents) so boundaries are preserved.
+
+Inspect grounding with `result.claims`: each claim has `status`, `source_id`, `citation`, `reason`, and `chunk_hits` (per-chunk scores).
+
+## Heuristic vs neural (contract)
+
+| Mode | How | Use for |
+|---|---|---|
+| **Neural** (default) | MiniLM embeddings + DeBERTa NLI | Production gate. Override with `embed_model=` / `nli_model=` or `RAG_EVAL_EMBED_MODEL` / `RAG_EVAL_NLI_MODEL`. |
+| **Heuristic** | Token overlap / negation / number heuristics | CI smoke, offline unit tests. Set `use_heuristic=True` or `RAG_EVAL_HEURISTIC=1`. |
+
+Heuristic is **not** calibrated to neural false-release / over-refusal rates. Treat heuristic PASS/ABSTAIN as a wiring check, not a quality gate. Ship production with neural backends (or an explicit judge escalation).
+
+Optional: `HALLUCINATION_GATE_JUDGE=1` plus `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` escalates **uncertain** claims only, using the top aligned chunks (not the full bag).
+
 ## What this is (and is not)
 
 | It does | It does not |
@@ -42,11 +71,7 @@ def my_rag(query: str):
 | Drop ungrounded sentences, then abstain if the remainder misses the query | Replace an LLM-as-judge on subtle reasoning, code, or math proofs |
 | Work with any stack that can give you `query`, `answer`, `evidence` | Guarantee multilingual performance equal to English without swapping models |
 
-Default neural backends: multilingual MiniLM + DeBERTa NLI. Override with `embed_model=`, `nli_model=`, or `RAG_EVAL_EMBED_MODEL` / `RAG_EVAL_NLI_MODEL`.
-
 Release is decided by **claim grounding**, not by the Bayesian network. BN scores are diagnostics only.
-
-Set `RAG_EVAL_HEURISTIC=1` for CI / offline (token coverage, no model download). Optional: `HALLUCINATION_GATE_JUDGE=1` plus `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to escalate **uncertain** claims only.
 
 ## Eval
 
@@ -78,7 +103,9 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-## HTTP API
+## HTTP API (optional)
+
+Only needed if you want a separate service. Library users do **not** need a running server.
 
 ```bash
 uvicorn bayesian_rag_evaluator.api.main:app --reload --port 8000

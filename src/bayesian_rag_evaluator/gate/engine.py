@@ -59,7 +59,7 @@ def apply_gate(
         return _abstain(
             original_answer,
             claims,
-            "One or more claims contradict the knowledge base.",
+            _contradiction_reason(contradicted),
         )
 
     unsafe_posteriors = False
@@ -144,6 +144,21 @@ def _abstain(
         claims=claims,
         dropped_claims=[c.text for c in claims],
     )
+
+
+def _contradiction_reason(claims: list[ClaimResult]) -> str:
+    parts: list[str] = []
+    for claim in claims:
+        snippet = claim.text.strip()
+        if len(snippet) > 100:
+            snippet = snippet[:97] + "..."
+        bit = f'"{snippet}"'
+        if claim.source_id:
+            bit += f" ↔ {claim.source_id}"
+        if claim.reason:
+            bit += f" ({claim.reason})"
+        parts.append(bit)
+    return "Contradicted claim(s): " + "; ".join(parts)
 
 
 def _compose_supported(claims: list[ClaimResult]) -> str:

@@ -55,6 +55,21 @@ class EvidenceUnit(BaseModel):
     source_id: str | None = None
 
 
+class ChunkHit(BaseModel):
+    """Per-chunk grounding score for one claim (before soft-OR aggregation)."""
+
+    source_id: str | None = None
+    status: ClaimVerdict
+    support_score: float = Field(..., ge=0.0, le=1.0)
+    contradiction_score: float = Field(..., ge=0.0, le=1.0)
+    coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    similarity: float = Field(default=0.0, ge=0.0, le=1.0)
+    entailment: float = Field(default=0.0, ge=0.0, le=1.0)
+    citation: str | None = None
+    modality: MediaType = MediaType.TEXT
+    reason: str | None = None
+
+
 class ClaimResult(BaseModel):
     text: str
     status: ClaimVerdict
@@ -63,6 +78,8 @@ class ClaimResult(BaseModel):
     citation: str | None = None
     source_id: str | None = None
     modality: MediaType = MediaType.TEXT
+    reason: str | None = None
+    chunk_hits: list[ChunkHit] = Field(default_factory=list)
 
 
 class GateResult(BaseModel):

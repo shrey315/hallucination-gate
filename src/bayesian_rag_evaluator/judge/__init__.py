@@ -37,18 +37,45 @@ def refine_uncertain_claims(
 ) -> list[ClaimResult]:
     if not judge_enabled():
         return claims
-    evidence = "\n".join(u.content for u in units)[:6000]
+    by_id = {u.source_id: u for u in units if u.source_id}
     out: list[ClaimResult] = []
     for claim in claims:
         if claim.status != ClaimVerdict.UNCERTAIN:
             out.append(claim)
             continue
+        # Prefer claim-aligned chunks; never dump the full top-k bag.
+        evidence = _evidence_for_claim(claim, units, by_id)
         verdict = _ask(claim.text, evidence)
         if verdict is None:
             out.append(claim)
             continue
         out.append(claim.model_copy(update={"status": verdict}))
     return out
+
+
+def _evidence_for_claim(
+    claim: ClaimResult,
+    units: list[EvidenceUnit],
+    by_id: dict[str | None, EvidenceUnit],
+) -> str:
+    parts: list[str] = []
+    if claim.chunk_hits:
+        ranked = sorted(
+            claim.chunk_hits,
+            key=lambda h: (h.support_score, h.coverage, h.similarity),
+            reverse=True,
+        )[:3]
+        for hit in ranked:
+            if hit.citation:
+                parts.append(hit.citation)
+            elif hit.source_id and hit.source_id in by_id:
+                parts.append(by_id[hit.source_id].content)
+    if not parts and claim.source_id and claim.source_id in by_id:
+        parts.append(by_id[claim.source_id].content)
+    if not parts:
+        # Last resort: first unit only (not the full joined bag).
+        parts = [units[0].content] if units else []
+    return "\n---\n".join(parts)[:6000]
 
 
 def _ask(claim: str, evidence: str) -> ClaimVerdict | None:

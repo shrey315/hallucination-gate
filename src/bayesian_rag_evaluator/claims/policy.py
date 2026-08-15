@@ -18,6 +18,38 @@ MIN_LEXICAL_ENTAIL = 0.42
 CONTRADICTION_THRESHOLD = 0.55
 UNCERTAIN_SUPPORT = 0.38
 UNCERTAIN_COVERAGE = 0.40
+# Neighbor chunks below this are ignored for contradiction vetoes.
+ALIGN_COVERAGE = 0.35
+ALIGN_SIMILARITY = 0.40
+
+
+def is_chunk_aligned(coverage: float, similarity: float) -> bool:
+    """True when a chunk is topical enough that disagreement can veto a claim."""
+    return coverage >= ALIGN_COVERAGE or similarity >= ALIGN_SIMILARITY
+
+
+def status_reason(
+    status: ClaimVerdict,
+    *,
+    numbers_ok: bool | None,
+    literals_ok: bool | None,
+    extra_distinctive: int,
+    coverage: float,
+    contradiction: float,
+) -> str:
+    if numbers_ok is False:
+        return "numeric mismatch with this chunk"
+    if literals_ok is False:
+        return "quoted literal missing from this chunk"
+    if status == ClaimVerdict.CONTRADICTED:
+        if extra_distinctive >= 2:
+            return "claim adds content words absent from this chunk"
+        return f"NLI/heuristic contradiction={contradiction:.2f}"
+    if status == ClaimVerdict.SUPPORTED:
+        return f"coverage={coverage:.2f}"
+    if status == ClaimVerdict.UNCERTAIN:
+        return f"weak overlap coverage={coverage:.2f}"
+    return f"insufficient grounding coverage={coverage:.2f}"
 
 
 def numbers_agree(claim: str, evidence: str) -> bool | None:

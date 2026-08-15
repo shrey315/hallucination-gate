@@ -255,6 +255,7 @@ class HeuristicNLIBackend(NLIBackend):
 
     def contradiction_prob(self, premise: str, hypothesis: str) -> float:
         from bayesian_rag_evaluator.evidence.multimodal import extract_numbers
+        from bayesian_rag_evaluator.evidence.synonyms import covers_token
 
         negations = {
             "not",
@@ -280,18 +281,26 @@ class HeuristicNLIBackend(NLIBackend):
         p_neg = bool(p & negations)
         h_allow = bool(h & allowances)
         p_allow = bool(p & allowances)
+        # Synonym-aware topical overlap (refund ↔ refunds).
+        h_content = content_tokens(hypothesis)
+        topical = any(covers_token(tok, p) for tok in h_content)
+
         if (h_neg and p_allow and not p_neg) or (p_neg and h_allow and not h_neg):
             return 0.82
-        if bool(h_neg) != bool(p_neg) and (h & p):
+        if bool(h_neg) != bool(p_neg) and topical:
             return 0.75
+        # "never allowed" vs a positive policy sentence about the same topic.
+        if topical and h_neg and h_allow and not p_neg:
+            return 0.80
 
         h_nums = extract_numbers(hypothesis)
         p_nums = set(extract_numbers(premise))
         if h_nums and p_nums and not any(n in p_nums for n in h_nums):
-            return 0.7
+            # Only treat number clash as contradiction when the chunk is topical.
+            if topical:
+                return 0.7
 
-        shared = h & p
-        if not shared:
+        if not topical:
             return 0.15
         return 0.10
 

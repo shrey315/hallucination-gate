@@ -33,6 +33,33 @@ class GatedAnswer:
     def __str__(self) -> str:
         return self.text
 
+    @property
+    def diagnostics(self) -> list[dict[str, Any]]:
+        """Compact claim↔chunk view for debugging RAG integrations."""
+        out: list[dict[str, Any]] = []
+        for claim in self.claims:
+            out.append(
+                {
+                    "claim": claim.get("text"),
+                    "status": claim.get("status"),
+                    "source_id": claim.get("source_id"),
+                    "reason": claim.get("reason"),
+                    "citation": claim.get("citation"),
+                    "chunk_hits": [
+                        {
+                            "source_id": h.get("source_id"),
+                            "status": h.get("status"),
+                            "support": h.get("support_score"),
+                            "contradiction": h.get("contradiction_score"),
+                            "coverage": h.get("coverage"),
+                            "reason": h.get("reason"),
+                        }
+                        for h in (claim.get("chunk_hits") or [])
+                    ],
+                }
+            )
+        return out
+
 
 class HallucinationGate:
     """Framework-agnostic gate for any RAG or fine-tuned generator.

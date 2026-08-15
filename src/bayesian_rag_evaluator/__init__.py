@@ -2,10 +2,11 @@
 
 Prefer the public library API::
 
-    from hallucinate_gate import HallucinationGate
+    from hallucination_gate import HallucinationGate
+
+This package intentionally does **not** re-export HallucinationGate here, so
+importing engine submodules cannot cycle through hallucinate_gate.
 """
 
-from hallucinate_gate import Evidence, GatedAnswer, HallucinationGate
-
-__version__ = "0.6.0"
-__all__ = ["HallucinationGate", "GatedAnswer", "Evidence"]
+__version__ = "0.6.1"
+__all__: list[str] = []
