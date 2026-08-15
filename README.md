@@ -28,6 +28,26 @@ result = gate.check(query, answer, evidence=Evidence.from_image(path="photo.jpg"
 result = gate.check(query, answer, evidence=Evidence.from_pdf("policy.pdf"))
 ```
 
+### OCR (high-tech path)
+
+```bash
+pip install "hallucination-gate[ocr]"
+# system dependency: Tesseract OCR binary (and poppler for scanned PDFs)
+```
+
+```python
+from hallucination_gate import Evidence, ocr_available
+
+print(ocr_available())  # {"pillow": True, "tesseract": True, "easyocr": True}
+
+# Auto-OCR an image path into grounding evidence
+ev = Evidence.from_image(path="warranty_card.jpg")  # preprocess + Tesseract/EasyOCR
+# Or OCR a scanned PDF page set into documents
+ev = Evidence.from_ocr(path="scanned_policy.pdf")
+```
+
+Engines: **Tesseract** (default) and optional **EasyOCR**, with upscale / contrast / denoise preprocess. Image-only PDFs fall back to page OCR when `pypdf` extracts no text.
+
 ```python
 @gate.protect
 def my_rag(query: str):

@@ -78,9 +78,26 @@ class Evidence:
         path: str | None = None,
         caption: str = "",
         ocr: str = "",
+        *,
+        auto_ocr: bool = True,
+        ocr_engine: str = "auto",
+        ocr_lang: str = "eng",
         **extra: Any,
     ) -> Evidence:
-        return cls(images=[ImageEvidence(path=path, caption=caption, ocr=ocr)], **extra)
+        """Build image evidence. When ``path`` is set and ``ocr`` is empty, runs OCR."""
+        ocr_text = ocr
+        if auto_ocr and path and not ocr_text:
+            from bayesian_rag_evaluator.evidence.ocr import ocr_image_detailed
+
+            result = ocr_image_detailed(path, engine=ocr_engine, lang=ocr_lang)  # type: ignore[arg-type]
+            ocr_text = result.text
+            if not caption and result.ok:
+                conf = f"{result.confidence:.0%}" if result.confidence is not None else "n/a"
+                caption = f"[ocr:{result.engine} conf={conf}]"
+        return cls(
+            images=[ImageEvidence(path=path, caption=caption, ocr=ocr_text)],
+            **extra,
+        )
 
     @classmethod
     def from_pdf(cls, *paths: str, **extra: Any) -> Evidence:
@@ -91,8 +108,31 @@ class Evidence:
         return cls(documents=documents, **extra)
 
     @classmethod
-    def from_ocr(cls, text: Any, **extra: Any) -> Evidence:
-        return cls(documents=text, **extra)
+    def from_ocr(
+        cls,
+        text: Any = None,
+        *,
+        path: str | None = None,
+        auto_ocr: bool = True,
+        ocr_engine: str = "auto",
+        ocr_lang: str = "eng",
+        **extra: Any,
+    ) -> Evidence:
+        """Pass OCR text directly, or OCR an image/PDF path into document evidence."""
+        if text is not None and path is None:
+            return cls(documents=text, **extra)
+        if path and auto_ocr:
+            from pathlib import Path
+
+            from bayesian_rag_evaluator.evidence.ocr import ocr_image, ocr_pdf_pages
+
+            p = Path(path)
+            if p.suffix.lower() == ".pdf":
+                pages = ocr_pdf_pages(p, engine=ocr_engine, lang=ocr_lang)  # type: ignore[arg-type]
+                return cls(documents=pages or text or "", **extra)
+            extracted = ocr_image(p, engine=ocr_engine, lang=ocr_lang)  # type: ignore[arg-type]
+            return cls(documents=extracted or text or "", **extra)
+        return cls(documents=text or "", **extra)
 
     @classmethod
     def from_audio(cls, transcripts: Any, **extra: Any) -> Evidence:

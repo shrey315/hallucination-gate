@@ -3,6 +3,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from bayesian_rag_evaluator.evidence.ocr import (
+    ocr_available,
+    ocr_image,
+    ocr_image_detailed,
+    ocr_pdf_pages,
+)
 from bayesian_rag_evaluator.models.schemas import ImageInput
 
 logger = logging.getLogger("bayesian_rag_evaluator.ingest")
@@ -11,7 +17,7 @@ _CLIP_MODEL = None
 
 
 def extract_pdf_text(path: str | Path, max_pages: int = 40) -> str:
-    """Extract text from a PDF. Requires pypdf."""
+    """Extract text from a PDF. Requires pypdf. Falls back to page OCR when empty."""
     from pypdf import PdfReader
 
     reader = PdfReader(str(path))
@@ -20,22 +26,16 @@ def extract_pdf_text(path: str | Path, max_pages: int = 40) -> str:
         text = page.extract_text() or ""
         if text.strip():
             pages.append(text.strip())
-    return "\n\n".join(pages)
+    joined = "\n\n".join(pages)
+    if joined.strip():
+        return joined
 
-
-def ocr_image(path: str | Path) -> str:
-    """OCR an image with pytesseract if installed; otherwise empty string."""
-    try:
-        import pytesseract
-        from PIL import Image
-    except ImportError:
-        logger.debug("OCR skipped: pytesseract or Pillow not installed")
-        return ""
-    try:
-        return pytesseract.image_to_string(Image.open(path)).strip()
-    except Exception as exc:  # tesseract binary missing
-        logger.warning("OCR failed for %s: %s", path, exc)
-        return ""
+    # Scanned / image-only PDF → OCR rasterized pages.
+    ocr_pages = ocr_pdf_pages(path, max_pages=min(max_pages, 20))
+    if ocr_pages:
+        logger.info("PDF text empty; used OCR for %s (%d pages)", path, len(ocr_pages))
+        return "\n\n".join(ocr_pages)
+    return ""
 
 
 def clip_image_text_similarity(image_path: str | Path, text: str) -> float | None:
@@ -60,10 +60,19 @@ def clip_image_text_similarity(image_path: str | Path, text: str) -> float | Non
         return None
 
 
-def enrich_image(image: ImageInput) -> ImageInput:
+def enrich_image(image: ImageInput, *, force_ocr: bool = False) -> ImageInput:
     """Fill OCR from disk when a path is provided and OCR text is empty."""
-    if image.path and not image.ocr_text:
-        image.ocr_text = ocr_image(image.path)
+    if image.path and (force_ocr or not image.ocr_text):
+        detailed = ocr_image_detailed(image.path)
+        if detailed.text:
+            image.ocr_text = detailed.text
+            if not image.caption and detailed.engine != "none":
+                conf = (
+                    f"{detailed.confidence:.0%}"
+                    if detailed.confidence is not None
+                    else "n/a"
+                )
+                image.caption = image.caption or f"[ocr:{detailed.engine} conf={conf}]"
     return image
 
 
@@ -77,3 +86,15 @@ def load_pdfs(paths: list[str]) -> list[str]:
         except Exception as exc:
             logger.warning("PDF extract failed for %s: %s", path, exc)
     return docs
+
+
+__all__ = [
+    "clip_image_text_similarity",
+    "enrich_image",
+    "extract_pdf_text",
+    "load_pdfs",
+    "ocr_available",
+    "ocr_image",
+    "ocr_image_detailed",
+    "ocr_pdf_pages",
+]
