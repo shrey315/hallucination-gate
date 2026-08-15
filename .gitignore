@@ -7,3 +7,6 @@ __pycache__/
 dist/
 build/
 config/learned_bn.pkl
+*.plan.md
+launch file.txt
+.cursor/

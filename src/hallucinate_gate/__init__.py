@@ -3,7 +3,7 @@
 from hallucinate_gate.evidence import Evidence, ImageEvidence, TableEvidence
 from hallucinate_gate.gate import GatedAnswer, HallucinationGate
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",

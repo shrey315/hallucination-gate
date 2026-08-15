@@ -1,52 +1,47 @@
 # hallucination-gate
 
-A **conservative grounding gate** for RAG and fine-tuned generators. It does not decide whether an answer is true in the world. It decides whether the answer is **supported by the evidence you pass in**, then **passes**, **rewrites**, or **abstains**.
+[![PyPI](https://img.shields.io/pypi/v/hallucination-gate.svg)](https://pypi.org/project/hallucination-gate/)
+[![Python](https://img.shields.io/pypi/pyversions/hallucination-gate.svg)](https://pypi.org/project/hallucination-gate/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/shrey315/hallucination-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/shrey315/hallucination-gate/actions/workflows/ci.yml)
 
-False release is treated as the failure mode that matters. If a rewrite would no longer answer the question, the gate abstains.
+**Conservative grounding gate** for RAG and fine-tuned LLMs.  
+Verify answers against *your* evidence → **pass**, **rewrite**, or **abstain**.
+
+False release is the failure mode that matters. Neighbor chunks no longer veto a claim another chunk fully supports.
+
+## Install
+
+```bash
+pip install -U hallucination-gate
+pip install "hallucination-gate[ocr]"   # Tesseract / EasyOCR / scanned PDFs
+```
+
+## Quick start
 
 ```python
 from hallucination_gate import HallucinationGate, Evidence
 
-gate = HallucinationGate()  # neural backends (production default)
+gate = HallucinationGate()  # neural default (production)
 # gate = HallucinationGate(use_heuristic=True)  # CI / offline smoke only
 
 result = gate.check(
     query=user_query,
     answer=llm_answer,
-    context=retrieved_docs,  # str | list[str] | LangChain Document | LlamaIndex node | dict
+    context=retrieved_docs,  # str | list[str] | LangChain Document | dict
 )
 return result.text  # show this to users
 ```
-
-Each claim is scored **against individual chunks**, then soft-OR aggregated: a supporting chunk wins even if a neighbor has unrelated numbers. Contradiction only counts from *aligned* chunks (enough lexical/semantic overlap with the claim).
 
 ```python
 gate = HallucinationGate(mode="fine_tuned")
 result = gate.check(query, answer, kb=your_knowledge_base)
 
-result = gate.check(query, answer, evidence=Evidence.from_image(path="photo.jpg", ocr="..."))
+# Images / PDFs / OCR
+result = gate.check(query, answer, evidence=Evidence.from_image(path="warranty_card.jpg"))
 result = gate.check(query, answer, evidence=Evidence.from_pdf("policy.pdf"))
+result = gate.check(query, answer, evidence=Evidence.from_ocr(path="scanned.pdf"))
 ```
-
-### OCR (high-tech path)
-
-```bash
-pip install "hallucination-gate[ocr]"
-# system dependency: Tesseract OCR binary (and poppler for scanned PDFs)
-```
-
-```python
-from hallucination_gate import Evidence, ocr_available
-
-print(ocr_available())  # {"pillow": True, "tesseract": True, "easyocr": True}
-
-# Auto-OCR an image path into grounding evidence
-ev = Evidence.from_image(path="warranty_card.jpg")  # preprocess + Tesseract/EasyOCR
-# Or OCR a scanned PDF page set into documents
-ev = Evidence.from_ocr(path="scanned_policy.pdf")
-```
-
-Engines: **Tesseract** (default) and optional **EasyOCR**, with upscale / contrast / denoise preprocess. Image-only PDFs fall back to page OCR when `pypdf` extracts no text.
 
 ```python
 @gate.protect
@@ -56,46 +51,59 @@ def my_rag(query: str):
     return answer, docs
 ```
 
-## What evidence to pass
+Inspect `result.claims` / `result.diagnostics` for claim↔chunk status, citations, and reasons.
 
-Pass the chunks that *should* ground the answer. Typical RAG top-k is fine now that scoring is per-chunk, but garbage neighbors still waste work and can create borderline UNCERTAIN hits.
+## OCR
+
+```bash
+pip install "hallucination-gate[ocr]"
+# system: Tesseract binary (+ poppler for scanned PDFs)
+```
+
+```python
+from hallucination_gate import Evidence, ocr_available
+
+print(ocr_available())  # pillow / tesseract / easyocr
+
+ev = Evidence.from_image(path="card.jpg")          # auto-OCR + preprocess
+ev = Evidence.from_ocr(path="scanned_policy.pdf")  # page OCR fallback
+```
+
+Upscale → contrast → denoise, then **Tesseract** and/or **EasyOCR**. Image-only PDFs OCR when text extract is empty.
+
+## Evidence patterns
 
 | Pattern | When |
 |---|---|
-| Full retriever top-k | Default. Claim↔chunk alignment handles mixed neighbors. |
-| Answer-aligned / reranked top-k | Best production default — keep chunks that cite the same entities/numbers as the draft answer. |
-| Citation-level evidence | If the generator emits citations, pass only those cited chunks. |
-| Top-1 only | Debugging / demos; too brittle for real retrieval. |
+| Full retriever top-k | Default. Per-chunk soft-OR handles mixed neighbors. |
+| Reranked / answer-aligned top-k | Best production default. |
+| Citation-level chunks | If the generator emits citations, pass only those. |
+| Top-1 only | Demos; too brittle for real retrieval. |
 
-Do **not** concatenate all chunks into one string before calling `check` — pass a `list[str]` (or documents) so boundaries are preserved.
+Pass a `list[str]` (or documents)—do **not** concatenate top-k into one bag.
 
-Inspect grounding with `result.claims`: each claim has `status`, `source_id`, `citation`, `reason`, and `chunk_hits` (per-chunk scores).
-
-## Heuristic vs neural (contract)
+## Heuristic vs neural
 
 | Mode | How | Use for |
 |---|---|---|
-| **Neural** (default) | MiniLM embeddings + DeBERTa NLI | Production gate. Override with `embed_model=` / `nli_model=` or `RAG_EVAL_EMBED_MODEL` / `RAG_EVAL_NLI_MODEL`. |
-| **Heuristic** | Token overlap / negation / number heuristics | CI smoke, offline unit tests. Set `use_heuristic=True` or `RAG_EVAL_HEURISTIC=1`. |
+| **Neural** (default) | MiniLM + DeBERTa NLI | Production |
+| **Heuristic** | Token / negation / number heuristics | CI smoke (`use_heuristic=True` or `RAG_EVAL_HEURISTIC=1`) |
 
-Heuristic is **not** calibrated to neural false-release / over-refusal rates. Treat heuristic PASS/ABSTAIN as a wiring check, not a quality gate. Ship production with neural backends (or an explicit judge escalation).
+Heuristic is a wiring check, not a calibrated quality gate.
 
-Optional: `HALLUCINATION_GATE_JUDGE=1` plus `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` escalates **uncertain** claims only, using the top aligned chunks (not the full bag).
+Optional judge on uncertain claims only: `HALLUCINATION_GATE_JUDGE=1` + `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
 
 ## What this is (and is not)
 
 | It does | It does not |
 |---|---|
-| Check claims against *your* retrieved chunks / KB / OCR / PDF text | Know if the KB itself is wrong |
-| Abstain on contradiction, invented entities, and number clashes | Read fine-tune weights |
-| Drop ungrounded sentences, then abstain if the remainder misses the query | Replace an LLM-as-judge on subtle reasoning, code, or math proofs |
-| Work with any stack that can give you `query`, `answer`, `evidence` | Guarantee multilingual performance equal to English without swapping models |
+| Ground claims in *your* chunks / KB / OCR / PDF | Know if the KB itself is wrong |
+| Abstain on contradiction, invented entities, number clashes | Read fine-tune weights |
+| Drop ungrounded sentences; abstain if the rest misses the query | Replace LLM-as-judge on subtle code/math proofs |
 
-Release is decided by **claim grounding**, not by the Bayesian network. BN scores are diagnostics only.
+Release is decided by **claim grounding**. BN scores are diagnostics only.
 
 ## Eval
-
-Held-out domains (HR, API, vaccines, Redis, K8s) report **false release** and **over-refusal**:
 
 ```bash
 pip install -e ".[dev]"
@@ -104,34 +112,15 @@ pytest -q -m "not neural"
 hallucination-gate eval-heldout
 ```
 
-## Install
-
-```bash
-pip install hallucination-gate
-```
-
-From GitHub:
-
-```bash
-pip install git+https://github.com/shrey315/hallucination-gate.git
-```
-
-From this folder:
-
-```bash
-pip install -e ".[dev]"
-pytest -q
-```
-
 ## HTTP API (optional)
 
-Only needed if you want a separate service. Library users do **not** need a running server.
+Library users do **not** need a server.
 
 ```bash
 uvicorn bayesian_rag_evaluator.api.main:app --reload --port 8000
 ```
 
-`POST /v1/answer` returns only `{safe_answer, released, request_id, latency_ms}`.
+`POST /v1/answer` → `{safe_answer, released, request_id, latency_ms}` only.
 
 ## License
 

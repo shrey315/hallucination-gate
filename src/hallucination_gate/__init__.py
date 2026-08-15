@@ -11,7 +11,7 @@ from hallucinate_gate import (
     TableEvidence,
 )
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",
