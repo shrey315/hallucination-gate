@@ -4,7 +4,9 @@ from bayesian_rag_evaluator.models.schemas import EvaluateRequest, ModelType
 
 
 def _eval(**kwargs):
-    evaluator = DiagnosticEvaluator(use_heuristic=True)
+    evaluator = DiagnosticEvaluator(
+        use_heuristic=True, policy="strict", align_contexts=False
+    )
     return evaluator.evaluate(EvaluateRequest(model_type=ModelType.RAG, **kwargs))
 
 

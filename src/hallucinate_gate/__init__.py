@@ -19,7 +19,18 @@ from hallucinate_gate.eval import (
 )
 from hallucinate_gate.gate import GatedAnswer, HallucinationGate
 
-__version__ = "0.8.0"
+try:
+    from bayesian_rag_evaluator.quality import (
+        BALANCED,
+        STRICT,
+        PolicyProfile,
+        resolve_mode,
+        resolve_policy,
+    )
+except Exception:  # pragma: no cover
+    BALANCED = STRICT = PolicyProfile = resolve_mode = resolve_policy = None  # type: ignore
+
+__version__ = "0.9.0"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",
@@ -40,6 +51,11 @@ __all__ = [
     "load_baseline",
     "save_baseline",
     "score_retrieval",
+    "BALANCED",
+    "STRICT",
+    "PolicyProfile",
+    "resolve_mode",
+    "resolve_policy",
 ]
 
 try:

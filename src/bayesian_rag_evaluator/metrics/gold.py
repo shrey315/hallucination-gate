@@ -39,7 +39,9 @@ def evaluate_gold_set(
     max_cases: int | None = None,
 ) -> GateMetrics:
     """Score the hallucination gate against labeled pass/rewrite/abstain cases."""
-    evaluator = evaluator or DiagnosticEvaluator(use_heuristic=True)
+    evaluator = evaluator or DiagnosticEvaluator(
+        use_heuristic=True, policy="strict", align_contexts=False
+    )
     subset = examples[:max_cases] if max_cases else examples
 
     confusion: dict[str, dict[str, int]] = {

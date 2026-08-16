@@ -44,6 +44,8 @@ DEFAULT_METRICS = (
     "faithfulness",
     "answer_relevancy",
     "context_precision",
+    "context_precision_labeled",
+    "context_precision_aligned",
     "context_recall",
     "groundedness",
     "hallucination_risk",
@@ -58,6 +60,8 @@ class SampleMetrics:
     faithfulness: float | None = None
     answer_relevancy: float | None = None
     context_precision: float | None = None
+    context_precision_labeled: float | None = None
+    context_precision_aligned: float | None = None
     context_recall: float | None = None
     groundedness: float | None = None
     hallucination_risk: float | None = None
@@ -173,10 +177,16 @@ def score_sample_from_response(
     )
 
     context_precision: float | None = None
-    if "context_precision" in wanted:
-        context_precision = _context_precision(
+    context_precision_labeled: float | None = None
+    context_precision_aligned: float | None = None
+    if "context_precision" in wanted or "context_precision_labeled" in wanted or "context_precision_aligned" in wanted:
+        labeled, aligned = _context_precision_pair(
             claims, contexts, relevant_contexts=relevant_contexts, notes=notes
         )
+        context_precision_labeled = labeled
+        context_precision_aligned = aligned
+        # Back-compat: prefer labeled when present, else aligned proxy.
+        context_precision = labeled if labeled is not None else aligned
 
     context_recall: float | None = None
     if "context_recall" in wanted:
@@ -196,6 +206,8 @@ def score_sample_from_response(
         faithfulness=faithfulness,
         answer_relevancy=answer_relevancy,
         context_precision=context_precision,
+        context_precision_labeled=context_precision_labeled,
+        context_precision_aligned=context_precision_aligned,
         context_recall=context_recall,
         groundedness=groundedness,
         hallucination_risk=hallucination_risk,
@@ -206,23 +218,24 @@ def score_sample_from_response(
     )
 
 
-def _context_precision(
+def _context_precision_pair(
     claims: list[Any],
     contexts: list[str],
     *,
     relevant_contexts: list[str] | None,
     notes: list[str],
-) -> float:
+) -> tuple[float | None, float | None]:
     if not contexts:
         notes.append("context_precision: no contexts → 0")
-        return 0.0
+        return 0.0, 0.0
 
+    labeled: float | None = None
     if relevant_contexts:
         rel = {_norm(c) for c in relevant_contexts}
         hits = sum(1 for c in contexts if _norm(c) in rel)
-        return hits / len(contexts)
+        labeled = hits / len(contexts)
+        notes.append("context_precision_labeled: from relevant_contexts")
 
-    # Proxy: chunk is "precise" if it is aligned/supportive for any claim hit.
     useful = 0
     for i, chunk in enumerate(contexts):
         sid = f"context:{i}"
@@ -240,14 +253,27 @@ def _context_precision(
                     break
             if chunk_useful:
                 break
-            # Fallback without chunk_hits: lexical coverage of claim in chunk.
             if token_coverage(claim.text, chunk) >= 0.45:
                 chunk_useful = True
                 break
         if chunk_useful:
             useful += 1
-    notes.append("context_precision: claim-aligned proxy (pass relevant_contexts for labeled metric)")
-    return useful / len(contexts)
+    aligned = useful / len(contexts)
+    notes.append("context_precision_aligned: claim-aligned chunk fraction")
+    return labeled, aligned
+
+
+def _context_precision(
+    claims: list[Any],
+    contexts: list[str],
+    *,
+    relevant_contexts: list[str] | None,
+    notes: list[str],
+) -> float:
+    labeled, aligned = _context_precision_pair(
+        claims, contexts, relevant_contexts=relevant_contexts, notes=notes
+    )
+    return float(labeled if labeled is not None else aligned)
 
 
 def _context_recall(
@@ -351,6 +377,9 @@ class RAGEval:
         evaluator: DiagnosticEvaluator | None = None,
         metrics: Sequence[str] = DEFAULT_METRICS,
         latency_budget: LatencyBudget | None = None,
+        mode: str | None = None,
+        policy: str | None = "balanced",
+        align_contexts: bool = True,
     ) -> None:
         self.metrics = list(metrics)
         self.latency_budget = latency_budget
@@ -358,7 +387,13 @@ class RAGEval:
             use_heuristic=use_heuristic,
             embed_model=embed_model,
             nli_model=nli_model,
+            mode=mode,
+            policy=policy,
+            align_contexts=align_contexts,
         )
+
+    def warm(self) -> None:
+        self._evaluator.warm()
 
     def evaluate(
         self,

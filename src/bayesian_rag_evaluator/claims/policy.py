@@ -9,6 +9,7 @@ from __future__ import annotations
 from bayesian_rag_evaluator.evidence.backends import content_tokens, token_coverage, token_set
 from bayesian_rag_evaluator.evidence.multimodal import extract_numbers
 from bayesian_rag_evaluator.models.schemas import ClaimVerdict
+from bayesian_rag_evaluator.quality import PolicyProfile
 
 # Release requires real overlap with evidence, not topical similarity.
 MIN_SUPPORT_COVERAGE = 0.72
@@ -92,33 +93,37 @@ def decide_status(
     numbers_ok: bool | None,
     extra_distinctive: int = 0,
     literals_ok: bool | None = None,
+    profile: PolicyProfile | None = None,
 ) -> ClaimVerdict:
+    from bayesian_rag_evaluator.quality import STRICT
+
+    p = profile or STRICT
     if numbers_ok is False or literals_ok is False:
         contradiction = max(contradiction, 0.78)
         entailment = min(entailment, 0.30)
 
     support = fused_support(entailment, similarity, coverage)
 
-    if contradiction >= CONTRADICTION_THRESHOLD and contradiction >= support:
+    if contradiction >= p.contradiction_threshold and contradiction >= support:
         return ClaimVerdict.CONTRADICTED
 
     # Invented extra assertions cannot ride a copied prefix.
-    strong_nli = entailment >= MIN_SUPPORT_ENTAIL and coverage >= 0.50
+    strong_nli = entailment >= p.min_support_entail and coverage >= 0.50
     if extra_distinctive >= 2:
         strong_nli = False
     strong_lex = (
         extra_distinctive == 0
-        and coverage >= MIN_SUPPORT_COVERAGE
-        and similarity >= MIN_LEXICAL_SIM
-        and entailment >= MIN_LEXICAL_ENTAIL
+        and coverage >= p.min_support_coverage
+        and similarity >= p.min_lexical_sim
+        and entailment >= p.min_lexical_entail
     )
-    if (strong_nli or strong_lex) and contradiction < CONTRADICTION_THRESHOLD:
+    if (strong_nli or strong_lex) and contradiction < p.contradiction_threshold:
         return ClaimVerdict.SUPPORTED
 
     if extra_distinctive >= 2:
         return ClaimVerdict.UNSUPPORTED
 
-    if support >= UNCERTAIN_SUPPORT and coverage >= UNCERTAIN_COVERAGE:
+    if support >= p.uncertain_support and coverage >= p.uncertain_coverage:
         return ClaimVerdict.UNCERTAIN
     return ClaimVerdict.UNSUPPORTED
 

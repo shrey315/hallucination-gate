@@ -32,6 +32,7 @@ def apply_gate(
     query: str = "",
     cite_sources: bool = False,
     use_bn_veto: bool = False,
+    allow_uncertain_rewrite: bool = False,
 ) -> GateResult:
     cfg = load_yaml(thresholds_path or DEFAULT_THRESHOLDS_PATH)
     gate_cfg = cfg.get("gate", {})
@@ -49,6 +50,7 @@ def apply_gate(
 
     contradicted = [c for c in claims if c.status == ClaimVerdict.CONTRADICTED]
     supported = [c for c in claims if c.status == ClaimVerdict.SUPPORTED]
+    uncertain = [c for c in claims if c.status == ClaimVerdict.UNCERTAIN]
     unsupported = [
         c
         for c in claims
@@ -71,6 +73,37 @@ def apply_gate(
         )
 
     if not supported and (unsupported or unsafe_posteriors or not claims):
+        # Generic over-refusal relief: uncertain-only → rewrite if it still answers the query.
+        if (
+            allow_uncertain_rewrite
+            and uncertain
+            and not any(c.status == ClaimVerdict.UNSUPPORTED for c in claims)
+            and not unsafe_posteriors
+        ):
+            usable = [
+                c
+                for c in uncertain
+                if c.support_score >= 0.55 and c.contradiction_score < 0.35
+            ]
+            if usable:
+                safe = compose_supported(usable, cite_sources=cite_sources)
+                if _answers_query(
+                    query, safe, min_rewrite_complete, min_rewrite_overlap
+                ):
+                    return GateResult(
+                        action=GateAction.REWRITE,
+                        released=True,
+                        reason=(
+                            "No fully supported claims, but high-overlap uncertain "
+                            "claims answer the query without contradiction."
+                        ),
+                        original_answer=original_answer,
+                        safe_answer=safe,
+                        claims=claims,
+                        dropped_claims=[
+                            c.text for c in claims if c not in usable
+                        ],
+                    )
         return _abstain(
             original_answer,
             claims,

@@ -7,6 +7,7 @@ from bayesian_rag_evaluator.claims.verifier import (
     unsupported_ratio,
     verify_claims,
 )
+from bayesian_rag_evaluator.evidence.align import align_contexts
 from bayesian_rag_evaluator.evidence.backends import (
     create_embedding_backend,
     create_nli_backend,
@@ -34,6 +35,12 @@ from bayesian_rag_evaluator.models.schemas import (
     ModelType,
     TableInput,
 )
+from bayesian_rag_evaluator.quality import (
+    PolicyProfile,
+    heuristic_for_mode,
+    resolve_mode,
+    resolve_policy,
+)
 
 
 class EvidenceExtractor:
@@ -42,24 +49,48 @@ class EvidenceExtractor:
         use_heuristic: bool | None = None,
         embed_model: str | None = None,
         nli_model: str | None = None,
+        mode: str | None = None,
+        policy: PolicyProfile | str | None = None,
+        align_contexts_flag: bool = True,
     ) -> None:
+        resolved_mode = resolve_mode(mode)
         if use_heuristic is None:
-            use_heuristic = os.getenv("RAG_EVAL_HEURISTIC", "").lower() in {
+            use_heuristic = heuristic_for_mode(resolved_mode)
+            # Legacy env still wins if explicitly set without mode.
+            if mode is None and os.getenv("RAG_EVAL_HEURISTIC", "").lower() in {
                 "1",
                 "true",
                 "yes",
-            }
+            }:
+                use_heuristic = True
+        self.mode = resolved_mode
+        self.policy = resolve_policy(policy)
+        self.align_contexts_flag = align_contexts_flag
         self._use_heuristic = use_heuristic
         self._embedder = create_embedding_backend(use_heuristic, model_name=embed_model)
         self._nli = create_nli_backend(use_heuristic, model_name=nli_model)
+
+    def warm(self) -> None:
+        """Load models into memory (cuts cold-start latency on later calls)."""
+        _ = self._embedder.similarity_matrix(["warmup query"], ["warmup evidence"])
+        _ = self._nli.predict_batch([("warmup evidence", "warmup claim")])
 
     def store_from_request(self, request: EvaluateRequest) -> list[EvidenceUnit]:
         images = [enrich_image(img.model_copy()) for img in request.images]
         documents = list(request.documents)
         if request.pdf_paths:
             documents.extend(load_pdfs(request.pdf_paths))
+        context_chunks = list(request.context_chunks)
+        if self.align_contexts_flag and context_chunks:
+            context_chunks = align_contexts(
+                request.query,
+                request.answer,
+                context_chunks,
+                self._embedder,
+                max_chunks=self.policy.max_aligned_chunks,
+            )
         return build_evidence_store(
-            context_chunks=request.context_chunks,
+            context_chunks=context_chunks,
             kb_chunks=request.kb_chunks,
             images=images,
             tables=request.tables,
@@ -74,7 +105,9 @@ class EvidenceExtractor:
     ) -> list[ClaimResult]:
         from bayesian_rag_evaluator.judge import refine_uncertain_claims
 
-        claims = verify_claims(answer, units, self._embedder, self._nli)
+        claims = verify_claims(
+            answer, units, self._embedder, self._nli, profile=self.policy
+        )
         return refine_uncertain_claims(claims, units)
 
     def extract(

@@ -11,6 +11,7 @@
 - **Retrieval:** hit@k, recall@k, MRR, nDCG@k
 - **Regression:** save baseline → diff → fail CI
 - **Latency budget:** p50 / p95 / p99 / max ceilings
+- **Modes:** `ci` (heuristic smoke) vs `quality` (neural); policies `strict` / `balanced`
 - **Gate:** pass / rewrite / abstain for production `safe_answer`
 
 Author: **Shreyas G**.
@@ -84,10 +85,16 @@ hallucination-gate eval-dataset samples.jsonl \
 ```python
 from hallucination_gate import HallucinationGate, Evidence
 
-gate = HallucinationGate()
+gate = HallucinationGate(
+    quality_mode="quality",  # or "ci" for heuristic smoke only
+    policy="balanced",       # or "strict" for max false-release lock
+    warm=True,               # preload models — cuts cold-start tails
+)
 result = gate.check(query, answer, context=retrieved_docs)
 return result.text
 ```
+
+Context chunks are **aligned/filtered** to the query+answer by default (generic overlap/embedding score — no domain lexicon). Metrics expose both `context_precision_labeled` and `context_precision_aligned`.
 
 ```python
 report = gate.evaluate(samples)  # same backends as the gate

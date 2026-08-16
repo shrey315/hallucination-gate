@@ -67,6 +67,13 @@ class HallucinationGate:
     It does not generate answers and does not depend on a dataset, vector DB,
     or model vendor. You pass a query, the model answer, and whatever evidence
     you have (retrieved chunks, KB text, images, PDFs, OCR, tables, audio).
+
+    Modes (dataset-agnostic):
+      - quality_mode=\"ci\" → heuristic smoke backends
+      - quality_mode=\"quality\" → neural backends (production)
+    Policy:
+      - \"strict\" → max false-release lock
+      - \"balanced\" → fewer over-refusals (uncertain rewrite + slightly softer support)
     """
 
     def __init__(
@@ -78,6 +85,10 @@ class HallucinationGate:
         learned_model_path: str | Path | None = None,
         embed_model: str | None = None,
         nli_model: str | None = None,
+        quality_mode: str | None = None,
+        policy: str | None = "balanced",
+        align_contexts: bool = True,
+        warm: bool = False,
     ) -> None:
         self.mode = mode
         self.strict = strict
@@ -86,7 +97,16 @@ class HallucinationGate:
             learned_model_path=Path(learned_model_path) if learned_model_path else None,
             embed_model=embed_model,
             nli_model=nli_model,
+            mode=quality_mode,
+            policy=policy,
+            align_contexts=align_contexts,
         )
+        if warm:
+            self.warm()
+
+    def warm(self) -> None:
+        """Preload embed/NLI backends to avoid cold-start latency spikes."""
+        self._evaluator.warm()
 
     def check(
         self,

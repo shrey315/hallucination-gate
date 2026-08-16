@@ -141,7 +141,9 @@ def calibrate_cmd(
 @app.command("eval-heldout")
 def eval_heldout_cmd() -> None:
     """Report false-release and over-refusal on the held-out domain set."""
-    evaluator = DiagnosticEvaluator(use_heuristic=True)
+    evaluator = DiagnosticEvaluator(
+        use_heuristic=True, policy="strict", align_contexts=False
+    )
     metrics = evaluate_gold_set(heldout_examples(), evaluator=evaluator)
     console.print_json(json.dumps(metrics.as_dict()))
 

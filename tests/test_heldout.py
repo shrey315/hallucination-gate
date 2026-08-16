@@ -9,7 +9,9 @@ from bayesian_rag_evaluator.metrics.gold import evaluate_gold_set
 def test_heldout_false_release_and_over_refusal():
     """Safety bar: almost no false releases, and we still answer grounded paraphrases."""
     examples = heldout_examples()
-    evaluator = DiagnosticEvaluator(use_heuristic=True)
+    evaluator = DiagnosticEvaluator(
+        use_heuristic=True, policy="strict", align_contexts=False
+    )
     metrics = evaluate_gold_set(examples, evaluator=evaluator)
     assert metrics.n == len(examples)
     assert metrics.false_release_rate <= 0.01

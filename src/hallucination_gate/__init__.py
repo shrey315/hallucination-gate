@@ -4,6 +4,7 @@
 """
 
 from hallucinate_gate import (
+    BALANCED,
     DEFAULT_METRICS,
     Evidence,
     EvalReport,
@@ -12,20 +13,24 @@ from hallucinate_gate import (
     ImageEvidence,
     LatencyBudget,
     LatencyReport,
+    PolicyProfile,
     RAGEval,
     RegressionResult,
     RetrievalScores,
+    STRICT,
     SampleMetrics,
     SampleResult,
     TableEvidence,
     compare_to_baseline,
     evaluate,
     load_baseline,
+    resolve_mode,
+    resolve_policy,
     save_baseline,
     score_retrieval,
 )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",
@@ -46,6 +51,11 @@ __all__ = [
     "load_baseline",
     "save_baseline",
     "score_retrieval",
+    "BALANCED",
+    "STRICT",
+    "PolicyProfile",
+    "resolve_mode",
+    "resolve_policy",
 ]
 
 try:

@@ -19,6 +19,7 @@ from bayesian_rag_evaluator.evidence.extractor import EvidenceExtractor
 from bayesian_rag_evaluator.gate.engine import apply_gate
 from bayesian_rag_evaluator.models.schemas import EvaluateRequest, EvaluateResponse
 from bayesian_rag_evaluator.observability import Timer
+from bayesian_rag_evaluator.quality import PolicyProfile, resolve_policy
 
 DEFAULT_THRESHOLDS = DEFAULT_THRESHOLDS_PATH
 
@@ -32,13 +33,20 @@ class DiagnosticEvaluator:
         learned_model_path: Path | None = None,
         embed_model: str | None = None,
         nli_model: str | None = None,
+        mode: str | None = None,
+        policy: PolicyProfile | str | None = None,
+        align_contexts: bool = True,
     ) -> None:
         self._thresholds_path = thresholds_path or DEFAULT_THRESHOLDS
         self._thresholds = load_yaml(self._thresholds_path)
+        self.policy = resolve_policy(policy)
         self._evidence = EvidenceExtractor(
             use_heuristic=use_heuristic,
             embed_model=embed_model,
             nli_model=nli_model,
+            mode=mode,
+            policy=self.policy,
+            align_contexts_flag=align_contexts,
         )
         model = None
         if learned_model_path and learned_model_path.exists():
@@ -46,6 +54,9 @@ class DiagnosticEvaluator:
         self._inference = BayesianInferenceEngine(
             structure_path=structure_path, model=model
         )
+
+    def warm(self) -> None:
+        self._evidence.warm()
 
     def evaluate(self, request: EvaluateRequest) -> EvaluateResponse:
         timer = Timer()
@@ -74,6 +85,7 @@ class DiagnosticEvaluator:
             strict=request.strict,
             thresholds_path=self._thresholds_path,
             query=request.query,
+            allow_uncertain_rewrite=self.policy.allow_uncertain_rewrite,
         )
         gaps = identify_gaps(discretized, posteriors, self._thresholds_path)
         suggestions = generate_suggestions(

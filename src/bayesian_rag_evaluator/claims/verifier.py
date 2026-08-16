@@ -27,6 +27,7 @@ from bayesian_rag_evaluator.models.schemas import (
     EvidenceUnit,
     MediaType,
 )
+from bayesian_rag_evaluator.quality import PolicyProfile, STRICT
 
 DEFAULT_TOP_K = 8
 
@@ -37,6 +38,7 @@ def verify_claims(
     embedder: EmbeddingBackend,
     nli: NLIBackend,
     top_k: int = DEFAULT_TOP_K,
+    profile: PolicyProfile | None = None,
 ) -> list[ClaimResult]:
     """Ground each claim against individual chunks, then soft-OR aggregate.
 
@@ -44,6 +46,7 @@ def verify_claims(
     chunk fully supports. Contradiction only wins from *aligned* chunks, and
     only when no chunk supports the claim.
     """
+    profile = profile or STRICT
     claims = extract_claims(answer)
     if not claims:
         return []
@@ -100,6 +103,7 @@ def verify_claims(
             nums_ok,
             extra_distinctive=len(extras),
             literals_ok=lits_ok,
+            profile=profile,
         )
         hits_by_claim[i].append(
             ChunkHit(
