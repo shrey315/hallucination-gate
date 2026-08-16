@@ -8,11 +8,12 @@ from typing import Any
 import pandas as pd
 from pgmpy.estimators import BayesianEstimator
 
-from bayesian_rag_evaluator.bn.discretize import PROJECT_ROOT, load_yaml
+from bayesian_rag_evaluator.bn.discretize import load_yaml
 from bayesian_rag_evaluator.bn.network import build_network
+from bayesian_rag_evaluator.config_paths import config_file
 from bayesian_rag_evaluator.models.schemas import LabeledExample
 
-DEFAULT_THRESHOLDS_PATH = PROJECT_ROOT / "config" / "thresholds.yaml"
+DEFAULT_THRESHOLDS_PATH = config_file("thresholds.yaml")
 
 
 def load_labeled_examples(path: Path) -> list[LabeledExample]:
