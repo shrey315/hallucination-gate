@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hallucination-gate"
-version = "0.6.3"
+version = "0.6.4"
 description = "Conservative grounding gate for RAG and fine-tuned LLMs. Blocks answers that are not supported by caller-supplied evidence."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "hallucination_gate" }]
+authors = [{ name = "Shreyas G", email = "shreyas2559@gmail.com" }]
+maintainers = [{ name = "Shreyas G", email = "shreyas2559@gmail.com" }]
 keywords = ["hallucination", "rag", "llm", "bayesian", "grounding", "evaluation"]
 classifiers = [
     "Programming Language :: Python :: 3",
