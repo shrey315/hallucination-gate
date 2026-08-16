@@ -157,5 +157,30 @@ def eval_gold_cmd(
     console.print_json(json.dumps(metrics.as_dict()))
 
 
+@app.command("eval-dataset")
+def eval_dataset_cmd(
+    path: Path = typer.Argument(..., help="JSON list or JSONL of {query,answer,contexts,...}"),
+    heuristic: bool = typer.Option(True, help="Heuristic backends (CI-friendly)"),
+    out: Path | None = typer.Option(None, help="Write full report JSON"),
+    jsonl_out: Path | None = typer.Option(None, help="Write per-sample JSONL"),
+) -> None:
+    """RAGAS-like claim-level metrics over a dataset (faithfulness, relevancy, …)."""
+    from bayesian_rag_evaluator.metrics.rag_eval import RAGEval
+
+    report = RAGEval(use_heuristic=True if heuristic else None).evaluate_paths(path)
+    table = Table(title=f"RAGEval n={report.n}")
+    table.add_column("metric")
+    table.add_column("mean")
+    for key, value in report.aggregate.items():
+        table.add_row(key, f"{value:.4f}")
+    console.print(table)
+    if out:
+        report.to_json(out)
+        console.print(f"Wrote {out}")
+    if jsonl_out:
+        report.to_jsonl(jsonl_out)
+        console.print(f"Wrote {jsonl_out}")
+
+
 if __name__ == "__main__":
     app()

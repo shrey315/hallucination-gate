@@ -5,117 +5,94 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/shrey315/hallucination-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/shrey315/hallucination-gate/actions/workflows/ci.yml)
 
-**Conservative grounding gate** for RAG and fine-tuned LLMs.  
-Verify answers against *your* evidence → **pass**, **rewrite**, or **abstain**.
+**RAG evaluation + conservative release gate** for RAG and fine-tuned LLMs.
 
-False release is the failure mode that matters. Neighbor chunks no longer veto a claim another chunk fully supports.
+- **Eval:** RAGAS-class metrics (`faithfulness`, `answer_relevancy`, `context_precision`, `context_recall`) on **claim↔chunk** grounding — not whole-answer NLI only.
+- **Gate:** pass / rewrite / abstain so production only ships supported text.
+
+Author: **Shreyas G**.
 
 ## Install
 
 ```bash
 pip install -U hallucination-gate
-pip install "hallucination-gate[ocr]"   # Tesseract / EasyOCR / scanned PDFs
+pip install "hallucination-gate[ocr]"   # optional OCR
 ```
 
-## Quick start
+## RAG eval (RAGAS replacement path)
+
+```python
+from hallucination_gate import RAGEval
+
+evaler = RAGEval()  # neural; use_heuristic=True for CI
+report = evaler.evaluate(
+    [
+        {
+            "query": "What is the warranty?",
+            "answer": "The Titan watch has a 2-year warranty.",
+            "contexts": [
+                "The Titan watch has a 2-year warranty covering defects.",
+                "Shipping takes 3-5 days.",
+            ],
+            "ground_truth": "2-year warranty for manufacturing defects.",
+            # optional labeled retrieval:
+            # "relevant_contexts": ["The Titan watch has a 2-year warranty covering defects."],
+        }
+    ]
+)
+print(report.aggregate)
+# {'faithfulness': ..., 'answer_relevancy': ..., 'context_precision': ..., ...}
+report.to_json("report.json")
+```
+
+```bash
+hallucination-gate eval-dataset samples.jsonl --out report.json
+```
+
+| Metric | How this package scores it |
+|---|---|
+| **faithfulness** | Fraction of answer claims supported by individual chunks (contradictions penalize) |
+| **answer_relevancy** | Query↔answer embedding relevance |
+| **context_precision** | Labeled `relevant_contexts` if provided; else claim-aligned chunk proxy |
+| **context_recall** | Requires `ground_truth` — fraction of reference facts covered by contexts |
+| **groundedness / hallucination_risk / release_safety** | BN posteriors from the same evidence stack |
+
+**Why this beats typical RAGAS setups for grounding:** claim-level soft-OR against neighbors, false-release oriented gate, multimodal/OCR evidence, and a production `safe_answer` path — not only a mean score.
+
+## Production gate
 
 ```python
 from hallucination_gate import HallucinationGate, Evidence
 
-gate = HallucinationGate()  # neural default (production)
-# gate = HallucinationGate(use_heuristic=True)  # CI / offline smoke only
-
-result = gate.check(
-    query=user_query,
-    answer=llm_answer,
-    context=retrieved_docs,  # str | list[str] | LangChain Document | dict
-)
-return result.text  # show this to users
+gate = HallucinationGate()
+result = gate.check(query, answer, context=retrieved_docs)
+return result.text
 ```
 
 ```python
-gate = HallucinationGate(mode="fine_tuned")
-result = gate.check(query, answer, kb=your_knowledge_base)
-
-# Images / PDFs / OCR
-result = gate.check(query, answer, evidence=Evidence.from_image(path="warranty_card.jpg"))
-result = gate.check(query, answer, evidence=Evidence.from_pdf("policy.pdf"))
-result = gate.check(query, answer, evidence=Evidence.from_ocr(path="scanned.pdf"))
+report = gate.evaluate(samples)  # same backends as the gate
 ```
-
-```python
-@gate.protect
-def my_rag(query: str):
-    docs = retriever(query)
-    answer = llm(query, docs)
-    return answer, docs
-```
-
-Inspect `result.claims` / `result.diagnostics` for claim↔chunk status, citations, and reasons.
 
 ## OCR
-
-```bash
-pip install "hallucination-gate[ocr]"
-# system: Tesseract binary (+ poppler for scanned PDFs)
-```
 
 ```python
 from hallucination_gate import Evidence, ocr_available
 
-print(ocr_available())  # pillow / tesseract / easyocr
-
-ev = Evidence.from_image(path="card.jpg")          # auto-OCR + preprocess
-ev = Evidence.from_ocr(path="scanned_policy.pdf")  # page OCR fallback
+ev = Evidence.from_image(path="warranty_card.jpg")
+ev = Evidence.from_ocr(path="scanned_policy.pdf")
 ```
 
-Upscale → contrast → denoise, then **Tesseract** and/or **EasyOCR**. Image-only PDFs OCR when text extract is empty.
+## Drawbacks (honest)
 
-## Evidence patterns
+- **Latency & cost** — neural path adds inference time / GPU·CPU load per sample.
+- **Over-refusal** — conservative gate can abstain on good extractive answers.
+- **Only as good as evidence** — checks support, not world truth; bad retrieval still hurts.
+- **Hard cases** — subtle math/code/reasoning can fool or over-block NLI.
+- **Heuristic ≠ quality gate** — `use_heuristic=True` is for CI smoke, not calibrated faithfulness.
+- **Ops surface** — HF downloads, torch/sentence-transformers weight, Windows symlink quirks.
+- **Not magic** — still not a full substitute for domain-labeled regression + human review; it is a stronger *grounding-first* eval+gate stack than score-only RAGAS defaults.
 
-| Pattern | When |
-|---|---|
-| Full retriever top-k | Default. Per-chunk soft-OR handles mixed neighbors. |
-| Reranked / answer-aligned top-k | Best production default. |
-| Citation-level chunks | If the generator emits citations, pass only those. |
-| Top-1 only | Demos; too brittle for real retrieval. |
-
-Pass a `list[str]` (or documents)—do **not** concatenate top-k into one bag.
-
-## Heuristic vs neural
-
-| Mode | How | Use for |
-|---|---|---|
-| **Neural** (default) | MiniLM + DeBERTa NLI | Production |
-| **Heuristic** | Token / negation / number heuristics | CI smoke (`use_heuristic=True` or `RAG_EVAL_HEURISTIC=1`) |
-
-Heuristic is a wiring check, not a calibrated quality gate.
-
-Optional judge on uncertain claims only: `HALLUCINATION_GATE_JUDGE=1` + `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
-
-## What this is (and is not)
-
-| It does | It does not |
-|---|---|
-| Ground claims in *your* chunks / KB / OCR / PDF | Know if the KB itself is wrong |
-| Abstain on contradiction, invented entities, number clashes | Read fine-tune weights |
-| Drop ungrounded sentences; abstain if the rest misses the query | Replace LLM-as-judge on subtle code/math proofs |
-
-Release is decided by **claim grounding**. BN scores are diagnostics only.
-
-## Drawbacks
-
-- **Latency & cost** — the neural path adds real inference time (and GPU/CPU load) on every gated answer.
-- **Over-refusal** — conservative by design; correct extractive answers can still be abstained (e.g. ~0.9 release on some held-out suites).
-- **Only as good as evidence** — if retrieval is wrong or incomplete, the gate cannot save you. It checks *support*, not world truth.
-- **Weak on hard cases** — subtle reasoning, math, code, or paraphrases that NLI misses can slip through or get blocked wrongly.
-- **Heuristic ≠ quality gate** — token heuristics are a wiring check, not a calibrated faithfulness metric.
-- **Ops surface** — model downloads, Hugging Face Hub, Windows symlink quirks, and heavy deps (`sentence-transformers`, `torch`, etc.).
-- **Diagnostics vs product UX** — `claims` / `diagnostics` help you debug; end users still just see abstain/rewrite text.
-
-**Bottom line:** Strong as a conservative release firewall *after* retrieval. Weak as a fast, high-recall answer scorer or a full substitute for eval frameworks (RAGAS-style metrics, regression suites, domain labels).
-
-## Eval
+## Eval (gate safety)
 
 ```bash
 pip install -e ".[dev]"
@@ -124,16 +101,6 @@ pytest -q -m "not neural"
 hallucination-gate eval-heldout
 ```
 
-## HTTP API (optional)
-
-Library users do **not** need a server.
-
-```bash
-uvicorn bayesian_rag_evaluator.api.main:app --reload --port 8000
-```
-
-`POST /v1/answer` → `{safe_answer, released, request_id, latency_ms}` only.
-
 ## License
 
-MIT
+MIT © Shreyas G

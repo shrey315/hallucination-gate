@@ -146,6 +146,21 @@ class HallucinationGate:
             raw=result if debug else None,
         )
 
+    def evaluate(
+        self,
+        samples: Any,
+        *,
+        metrics: list[str] | tuple[str, ...] | None = None,
+    ):
+        """Dataset-level RAGAS-like report using this gate's backends."""
+        from hallucinate_gate.eval import DEFAULT_METRICS, RAGEval
+
+        names = list(metrics) if metrics is not None else list(DEFAULT_METRICS)
+        return RAGEval(evaluator=self._evaluator, metrics=names).evaluate(
+            samples,
+            metrics=names,
+        )
+
     def run(
         self,
         query: str,
