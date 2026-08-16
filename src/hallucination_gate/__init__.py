@@ -1,6 +1,6 @@
 """Alias for ``hallucinate_gate``. Prefer::
 
-    from hallucination_gate import HallucinationGate, RAGEval
+    from hallucination_gate import HallucinationGate, RAGEval, LatencyBudget
 """
 
 from hallucinate_gate import (
@@ -10,14 +10,22 @@ from hallucinate_gate import (
     GatedAnswer,
     HallucinationGate,
     ImageEvidence,
+    LatencyBudget,
+    LatencyReport,
     RAGEval,
+    RegressionResult,
+    RetrievalScores,
     SampleMetrics,
     SampleResult,
     TableEvidence,
+    compare_to_baseline,
     evaluate,
+    load_baseline,
+    save_baseline,
+    score_retrieval,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",
@@ -30,6 +38,14 @@ __all__ = [
     "SampleResult",
     "DEFAULT_METRICS",
     "evaluate",
+    "LatencyBudget",
+    "LatencyReport",
+    "RegressionResult",
+    "RetrievalScores",
+    "compare_to_baseline",
+    "load_baseline",
+    "save_baseline",
+    "score_retrieval",
 ]
 
 try:

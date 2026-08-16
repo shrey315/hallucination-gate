@@ -163,23 +163,55 @@ def eval_dataset_cmd(
     heuristic: bool = typer.Option(True, help="Heuristic backends (CI-friendly)"),
     out: Path | None = typer.Option(None, help="Write full report JSON"),
     jsonl_out: Path | None = typer.Option(None, help="Write per-sample JSONL"),
+    baseline: Path | None = typer.Option(None, help="Compare against saved baseline JSON"),
+    save_baseline: Path | None = typer.Option(None, help="Write baseline JSON from this run"),
+    fail_on_regression: bool = typer.Option(False, help="Exit 1 if metrics regress vs baseline"),
+    p95_ms: float | None = typer.Option(None, help="Fail if latency p95 exceeds this (ms)"),
+    p50_ms: float | None = typer.Option(None, help="Fail if latency p50 exceeds this (ms)"),
+    max_ms: float | None = typer.Option(None, help="Fail if any sample exceeds this (ms)"),
 ) -> None:
-    """RAGAS-like claim-level metrics over a dataset (faithfulness, relevancy, …)."""
+    """Full RAG quality report: grounding + retrieval + latency (+ optional regression)."""
+    from bayesian_rag_evaluator.metrics.latency import LatencyBudget
     from bayesian_rag_evaluator.metrics.rag_eval import RAGEval
 
-    report = RAGEval(use_heuristic=True if heuristic else None).evaluate_paths(path)
-    table = Table(title=f"RAGEval n={report.n}")
+    budget = None
+    if p95_ms is not None or p50_ms is not None or max_ms is not None:
+        budget = LatencyBudget(p50_ms=p50_ms, p95_ms=p95_ms, max_ms=max_ms)
+
+    report = RAGEval(
+        use_heuristic=True if heuristic else None,
+        latency_budget=budget,
+    ).evaluate_paths(
+        path,
+        baseline_path=baseline,
+        save_baseline_path=save_baseline,
+        fail_on_regression=fail_on_regression,
+        fail_on_latency=budget is not None,
+    )
+    table = Table(title=f"RAGEval n={report.n} ok={report.ok}")
+    table.add_column("section")
     table.add_column("metric")
-    table.add_column("mean")
+    table.add_column("value")
     for key, value in report.aggregate.items():
-        table.add_row(key, f"{value:.4f}")
+        table.add_row("quality", key, f"{value:.4f}")
+    for key, value in report.retrieval.items():
+        table.add_row("retrieval", key, f"{value:.4f}")
+    for key in ("p50_ms", "p95_ms", "p99_ms", "max_ms", "mean_ms"):
+        if key in (report.latency or {}):
+            table.add_row("latency", key, f"{report.latency[key]}")
     console.print(table)
+    if report.regression:
+        console.print_json(json.dumps(report.regression))
+    if report.failures:
+        console.print("[red]" + "; ".join(report.failures) + "[/red]")
     if out:
         report.to_json(out)
         console.print(f"Wrote {out}")
     if jsonl_out:
         report.to_jsonl(jsonl_out)
         console.print(f"Wrote {jsonl_out}")
+    if not report.ok:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

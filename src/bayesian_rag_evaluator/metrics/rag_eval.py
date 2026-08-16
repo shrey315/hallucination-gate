@@ -18,6 +18,21 @@ from bayesian_rag_evaluator.claims.extractor import extract_claims
 from bayesian_rag_evaluator.claims.policy import is_chunk_aligned
 from bayesian_rag_evaluator.evaluator import DiagnosticEvaluator
 from bayesian_rag_evaluator.evidence.backends import token_coverage
+from bayesian_rag_evaluator.metrics.latency import (
+    LatencyBudget,
+    LatencyReport,
+    check_latency_budget,
+)
+from bayesian_rag_evaluator.metrics.regression import (
+    RegressionResult,
+    compare_to_baseline,
+    save_baseline,
+)
+from bayesian_rag_evaluator.metrics.retrieval import (
+    RetrievalScores,
+    aggregate_retrieval,
+    score_retrieval,
+)
 from bayesian_rag_evaluator.models.schemas import (
     ClaimVerdict,
     EvaluateRequest,
@@ -65,6 +80,7 @@ class SampleResult:
     safe_answer: str | None = None
     ground_truth: str | None = None
     latency_ms: float | None = None
+    retrieval: RetrievalScores | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +92,7 @@ class SampleResult:
             "claims": self.claims,
             "safe_answer": self.safe_answer,
             "latency_ms": self.latency_ms,
+            "retrieval": self.retrieval.as_dict() if self.retrieval else None,
         }
 
 
@@ -85,8 +102,13 @@ class EvalReport:
     aggregate: dict[str, float]
     samples: list[SampleResult]
     metrics: list[str]
+    retrieval: dict[str, float] = field(default_factory=dict)
+    latency: dict[str, Any] = field(default_factory=dict)
+    regression: dict[str, Any] | None = None
+    ok: bool = True
+    failures: list[str] = field(default_factory=list)
     framework: str = "hallucination-gate"
-    compared_to: str = "ragas-like claim-level eval"
+    compared_to: str = "ragas-like claim-level eval + retrieval + latency"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -95,6 +117,11 @@ class EvalReport:
             "n": self.n,
             "metrics": self.metrics,
             "aggregate": self.aggregate,
+            "retrieval": self.retrieval,
+            "latency": self.latency,
+            "regression": self.regression,
+            "ok": self.ok,
+            "failures": self.failures,
             "samples": [s.as_dict() for s in self.samples],
         }
 
@@ -108,6 +135,10 @@ class EvalReport:
         with Path(path).open("w", encoding="utf-8") as f:
             for sample in self.samples:
                 f.write(json.dumps(sample.as_dict(), ensure_ascii=False) + "\n")
+
+    def raise_if_failed(self) -> None:
+        if not self.ok:
+            raise AssertionError("; ".join(self.failures) or "eval budget/regression failed")
 
 
 def score_sample_from_response(
@@ -282,6 +313,7 @@ def normalize_sample(sample: dict[str, Any] | Any) -> dict[str, Any]:
             "ground_truth": getattr(sample, "ground_truth", None)
             or getattr(sample, "reference", None),
             "relevant_contexts": getattr(sample, "relevant_contexts", None),
+            "relevant_indices": getattr(sample, "relevant_indices", None),
             "kb": getattr(sample, "kb", None),
         }
     contexts = normalize_context(
@@ -290,23 +322,25 @@ def normalize_sample(sample: dict[str, Any] | Any) -> dict[str, Any]:
         or data.get("context_chunks")
         or []
     )
+    raw_idx = data.get("relevant_indices") or data.get("qrels") or []
+    indices: list[int] = []
+    if isinstance(raw_idx, dict):
+        indices = [int(k) for k, v in raw_idx.items() if v]
+    else:
+        indices = [int(i) for i in raw_idx]
     return {
         "query": str(data.get("query") or ""),
         "answer": str(data.get("answer") or data.get("response") or ""),
         "contexts": contexts,
         "ground_truth": data.get("ground_truth") or data.get("reference"),
         "relevant_contexts": normalize_context(data.get("relevant_contexts") or []),
+        "relevant_indices": indices,
         "kb": normalize_context(data.get("kb") or data.get("kb_chunks") or []),
     }
 
 
 class RAGEval:
-    """Dataset-level RAG evaluation (RAGAS-like metrics, claim-level faithfulness).
-
-    Better than typical answer-level faithfulness by grounding each claim against
-    individual chunks, then aggregating. Still depends on retrieval quality and
-    NLI limits for math/code — those are measured, not magically solved.
-    """
+    """Dataset-level RAG quality system: grounding metrics + retrieval + latency + regression."""
 
     def __init__(
         self,
@@ -316,8 +350,10 @@ class RAGEval:
         nli_model: str | None = None,
         evaluator: DiagnosticEvaluator | None = None,
         metrics: Sequence[str] = DEFAULT_METRICS,
+        latency_budget: LatencyBudget | None = None,
     ) -> None:
         self.metrics = list(metrics)
+        self.latency_budget = latency_budget
         self._evaluator = evaluator or DiagnosticEvaluator(
             use_heuristic=use_heuristic,
             embed_model=embed_model,
@@ -329,9 +365,16 @@ class RAGEval:
         samples: Iterable[dict[str, Any] | Any],
         *,
         metrics: Sequence[str] | None = None,
+        latency_budget: LatencyBudget | None = None,
+        baseline_path: str | Path | None = None,
+        save_baseline_path: str | Path | None = None,
+        fail_on_regression: bool = False,
+        fail_on_latency: bool = True,
     ) -> EvalReport:
         metric_names = list(metrics or self.metrics)
+        budget = latency_budget if latency_budget is not None else self.latency_budget
         rows: list[SampleResult] = []
+        retrieval_rows: list[RetrievalScores] = []
         for raw in samples:
             item = normalize_sample(raw)
             request = EvaluateRequest(
@@ -350,6 +393,13 @@ class RAGEval:
                 relevant_contexts=item["relevant_contexts"] or None,
                 metrics=metric_names,
             )
+            retrieval = score_retrieval(
+                item["contexts"],
+                relevant_contexts=item["relevant_contexts"] or None,
+                relevant_indices=item["relevant_indices"] or None,
+            )
+            if retrieval.mrr is not None:
+                retrieval_rows.append(retrieval)
             rows.append(
                 SampleResult(
                     query=item["query"],
@@ -360,20 +410,52 @@ class RAGEval:
                     claims=[c.model_dump(mode="json") for c in response.claims],
                     safe_answer=response.safe_answer,
                     latency_ms=response.latency_ms,
+                    retrieval=retrieval,
                 )
             )
-        return EvalReport(
+
+        latencies = [s.latency_ms for s in rows if s.latency_ms is not None]
+        latency_report: LatencyReport = check_latency_budget(latencies, budget)
+        retrieval_agg = aggregate_retrieval(retrieval_rows)
+
+        failures: list[str] = []
+        if fail_on_latency and not latency_report.ok:
+            failures.extend(latency_report.failures)
+
+        report = EvalReport(
             n=len(rows),
             aggregate=_aggregate(rows, metric_names),
             samples=rows,
             metrics=metric_names,
+            retrieval=retrieval_agg,
+            latency=latency_report.as_dict(),
+            ok=not failures,
+            failures=list(failures),
         )
+
+        if save_baseline_path:
+            save_baseline(report, save_baseline_path)
+
+        regression: RegressionResult | None = None
+        if baseline_path:
+            regression = compare_to_baseline(report, baseline_path)
+            report.regression = regression.as_dict()
+            if fail_on_regression and not regression.passed:
+                report.ok = False
+                report.failures = list(report.failures) + list(regression.failures)
+
+        return report
 
     def evaluate_paths(
         self,
         path: str | Path,
         *,
         metrics: Sequence[str] | None = None,
+        latency_budget: LatencyBudget | None = None,
+        baseline_path: str | Path | None = None,
+        save_baseline_path: str | Path | None = None,
+        fail_on_regression: bool = False,
+        fail_on_latency: bool = True,
     ) -> EvalReport:
         """Load JSON list or JSONL of samples and evaluate."""
         path = Path(path)
@@ -383,4 +465,12 @@ class RAGEval:
         else:
             data = json.loads(text)
             samples = data if isinstance(data, list) else data.get("samples", [])
-        return self.evaluate(samples, metrics=metrics)
+        return self.evaluate(
+            samples,
+            metrics=metrics,
+            latency_budget=latency_budget,
+            baseline_path=baseline_path,
+            save_baseline_path=save_baseline_path,
+            fail_on_regression=fail_on_regression,
+            fail_on_latency=fail_on_latency,
+        )

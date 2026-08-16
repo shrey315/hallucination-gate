@@ -151,14 +151,28 @@ class HallucinationGate:
         samples: Any,
         *,
         metrics: list[str] | tuple[str, ...] | None = None,
+        latency_budget: Any = None,
+        baseline_path: Any = None,
+        save_baseline_path: Any = None,
+        fail_on_regression: bool = False,
+        fail_on_latency: bool = True,
     ):
-        """Dataset-level RAGAS-like report using this gate's backends."""
+        """Dataset-level RAG quality report (metrics + retrieval + latency + regression)."""
         from hallucinate_gate.eval import DEFAULT_METRICS, RAGEval
 
         names = list(metrics) if metrics is not None else list(DEFAULT_METRICS)
-        return RAGEval(evaluator=self._evaluator, metrics=names).evaluate(
+        return RAGEval(
+            evaluator=self._evaluator,
+            metrics=names,
+            latency_budget=latency_budget,
+        ).evaluate(
             samples,
             metrics=names,
+            latency_budget=latency_budget,
+            baseline_path=baseline_path,
+            save_baseline_path=save_baseline_path,
+            fail_on_regression=fail_on_regression,
+            fail_on_latency=fail_on_latency,
         )
 
     def run(
