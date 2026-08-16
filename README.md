@@ -103,6 +103,18 @@ Optional judge on uncertain claims only: `HALLUCINATION_GATE_JUDGE=1` + `ANTHROP
 
 Release is decided by **claim grounding**. BN scores are diagnostics only.
 
+## Drawbacks
+
+- **Latency & cost** — the neural path adds real inference time (and GPU/CPU load) on every gated answer.
+- **Over-refusal** — conservative by design; correct extractive answers can still be abstained (e.g. ~0.9 release on some held-out suites).
+- **Only as good as evidence** — if retrieval is wrong or incomplete, the gate cannot save you. It checks *support*, not world truth.
+- **Weak on hard cases** — subtle reasoning, math, code, or paraphrases that NLI misses can slip through or get blocked wrongly.
+- **Heuristic ≠ quality gate** — token heuristics are a wiring check, not a calibrated faithfulness metric.
+- **Ops surface** — model downloads, Hugging Face Hub, Windows symlink quirks, and heavy deps (`sentence-transformers`, `torch`, etc.).
+- **Diagnostics vs product UX** — `claims` / `diagnostics` help you debug; end users still just see abstain/rewrite text.
+
+**Bottom line:** Strong as a conservative release firewall *after* retrieval. Weak as a fast, high-recall answer scorer or a full substitute for eval frameworks (RAGAS-style metrics, regression suites, domain labels).
+
 ## Eval
 
 ```bash
