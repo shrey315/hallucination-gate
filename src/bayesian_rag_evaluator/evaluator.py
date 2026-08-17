@@ -86,6 +86,7 @@ class DiagnosticEvaluator:
             thresholds_path=self._thresholds_path,
             query=request.query,
             allow_uncertain_rewrite=self.policy.allow_uncertain_rewrite,
+            retrieval_quality=scores.retrieval_quality,
         )
         gaps = identify_gaps(discretized, posteriors, self._thresholds_path)
         suggestions = generate_suggestions(

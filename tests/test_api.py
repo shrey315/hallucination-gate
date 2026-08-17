@@ -8,6 +8,7 @@ from bayesian_rag_evaluator.api.main import app
 def client(monkeypatch):
     monkeypatch.setenv("RAG_EVAL_HEURISTIC", "1")
     monkeypatch.delenv("RAG_EVAL_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_EVAL_API_KEYS", raising=False)
     from bayesian_rag_evaluator.api import main as api_main
 
     api_main._evaluator = None

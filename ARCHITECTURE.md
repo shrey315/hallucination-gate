@@ -1,7 +1,7 @@
 # Architecture — hallucination-gate
 
 **Audience:** engineering leadership, integrators, reviewers.
-**Product:** v0.9.1 — conservative grounding firewall for RAG and fine-tuned LLMs.
+**Product:** v0.9.2 — conservative grounding firewall for RAG and fine-tuned LLMs.
 **North star:** do not show the user an answer the supplied evidence cannot support. Prefer abstention over a false release.
 
 This document is the system design, not a tutorial. For install and API snippets, see [README.md](README.md).
@@ -96,7 +96,7 @@ src/
     eval.py                    RAGEval re-export
   bayesian_rag_evaluator/      engine (not the public brand)
     evaluator.py               DiagnosticEvaluator — the pipeline
-    quality.py                 ci|quality  ×  strict|balanced
+    quality.py                 ci|quality|quality_plus  ×  strict|balanced
     adapters.py                normalize_context
     cli.py                     Typer app
     api/main.py                FastAPI sidecar
@@ -357,11 +357,14 @@ Gold generation (`data_gen/gold.py`) exists to stress CPT learning and gate acti
 
 | Route | Auth | Returns |
 |---|---|---|
-| `GET /health` | none | status, backend (heuristic vs neural) |
-| `GET /metrics` | none | in-process registry: p50/p95/p99, gate_actions, timeouts, auth failures |
-| `POST /v1/answer` | `X-API-Key` if `RAG_EVAL_API_KEY` set | `SafeAnswerResponse` only — **never raw model text** |
+| `GET /health` | none | status, backend, `release_authority=claim_status`, `scores_are_calibrated=false` |
+| `GET /metrics` | none | Prometheus text (process-local; tenant labels if keys are set) |
+| `GET /metrics.json` | none | JSON snapshot of the same registry |
+| `POST /v1/answer` | `X-API-Key` / `Authorization: Bearer` if keys set | `SafeAnswerResponse` only — **never raw model text**; includes `evidence_gap` |
 | `POST /evaluate` | same | full `EvaluateResponse` (internal) |
 | `POST /evaluate/batch` | same | list of full responses |
+
+Auth: `RAG_EVAL_API_KEY` (single key, tenant `RAG_EVAL_TENANT` or `default`) and/or `RAG_EVAL_API_KEYS=tenant:secret,tenant2:secret2`. `X-Tenant-Id` must match the key if sent. **Same process, shared models.** Tenant IDs are metric/log labels, not data isolation.
 
 Hardening already in tree:
 
@@ -369,7 +372,7 @@ Hardening already in tree:
 - Access log + `x-request-id` / `x-latency-ms`
 - Lazy singleton evaluator (first request pays model load unless you warm at boot)
 
-This is a **process-local** metrics registry, not Prometheus. For production, scrape `/metrics` or wrap with your APM.
+This is a **sidecar**, not a multi-tenant platform. Scrape Prometheus `/metrics`; do not expect per-tenant model isolation or durable audit storage.
 
 ---
 
@@ -392,7 +395,7 @@ safe_generate = gate.wrap(my_llm, retrieve=my_retriever, text_only=True)
 def rag(query: str): ...
 ```
 
-`GatedAnswer` is the contract: `text`, `released`, `action`, `reason`, `claims`, `diagnostics` (claim↔chunk view). `raw=EvaluateResponse` only when `debug=True` — do not log full internals to user-facing telemetry without review.
+`GatedAnswer` is the contract: `text`, `released`, `action`, `reason`, `claims`, `evidence_gap`, `release_authority="claim_status"`, `scores_are_calibrated=False`, `diagnostics` (claim↔chunk view). BN fusion scores live on `raw` only when `debug=True` — they are not a release probability.
 
 ---
 
@@ -400,12 +403,12 @@ def rag(query: str): ...
 
 ### Modes
 
-| | CI smoke | Production |
-|---|---|---|
-| Flag | `quality_mode="ci"` or `RAG_EVAL_HEURISTIC=1` | `quality_mode="quality"` |
-| Backends | heuristic overlap | MiniLM + DeBERTa-NLI |
-| Use | pytest, `eval-dataset --heuristic` | live `check` / `/v1/answer` |
-| Honest limit | not a faithfulness gate | GPU/CPU + download cost |
+| | CI smoke | Production | Harder NLI (opt-in) |
+|---|---|---|---|
+| Flag | `quality_mode="ci"` or `RAG_EVAL_HEURISTIC=1` | `quality_mode="quality"` | `quality_mode="quality_plus"` |
+| Backends | heuristic overlap | MiniLM + DeBERTa-v3-small | mpnet + DeBERTa-v3-base |
+| Use | pytest, `eval-dataset --heuristic` | live `check` / `/v1/answer` | English math/code-ish RAG |
+| Honest limit | not a faithfulness gate | GPU/CPU + download cost | still not a hard-reasoning judge |
 
 CI (`.github/workflows/ci.yml`): Python 3.11/3.12, `pytest -m "not neural"` required; neural extra is `continue-on-error`.
 
@@ -420,10 +423,12 @@ CI (`.github/workflows/ci.yml`): Python 3.11/3.12, `pytest -m "not neural"` requ
 ### What to monitor
 
 - Gate mix: `pass` / `rewrite` / `abstain` (registry `gate_actions`)
-- False-release rate on a labeled canary (must stay ~0)
+- `evidence_gap`: `retrieval` vs `generation` vs `contradiction` (fix retriever vs generator)
+- False-release rate on a labeled canary (must stay ~0) — published in [docs/EVAL.md](docs/EVAL.md)
 - Over-refusal rate (product cost — tune policy, not the contradiction bar)
 - p95/p99 of `latency_ms`; timeout count
 - Auth failures if the sidecar is exposed
+- Per-tenant request counters when `RAG_EVAL_API_KEYS` is set
 
 ---
 
@@ -431,17 +436,19 @@ CI (`.github/workflows/ci.yml`): Python 3.11/3.12, `pytest -m "not neural"` requ
 
 | Risk | Mitigation in tree | Residual |
 |---|---|---|
-| Fluent but ungrounded answer | Claim coverage + extra-entity penalty + contradiction abstain | Subtle reasoning / math / code can fool NLI or over-block |
+| Fluent but ungrounded answer | Claim coverage + extra-entity penalty + contradiction abstain | Subtle reasoning can still fool NLI or over-block |
+| Math / code literals | All claim numbers must appear; equation clash; identifier extras | No CAS / AST; `quality_plus` is stronger NLI, not a prover |
 | Neighbor-chunk contamination | Soft-OR; aligned-only contradiction | Alignment thresholds are heuristic |
 | Cosine “this is on topic” | Coverage required for SUPPORT | Heuristic mode is weaker |
 | Caller dumps entire corpus as context | `align_contexts` + `max_aligned_chunks` | Alignment can drop a needed chunk (bag never fully emptied) |
 | OCR / PDF garbage | OCR confidence in caption; empty PDF → OCR pages | Garbage in, abstain or false uncertain |
 | `/evaluate` leaking raw answer | `/v1/answer` strips it; API key on internals | Misconfigured public `/evaluate` |
-| Treating BN score as P(hallucination) | Documented fusion score; veto off by default | Dashboards will still be misread |
+| Treating BN score as P(hallucination) | API/SDK fields `scores_are_calibrated=false`, `release_authority=claim_status`; veto off | Dashboards can still be misread if you plot `scores.*` as probabilities |
+| Bad retrieval looking like hallucination | `evidence_gap=retrieval` + retrieval abstain copy | Gate cannot invent missing chunks |
 | LLM judge weakening the lock | Off; UNCERTAIN-only; fail-closed | A custom judge URL can still promote junk if you turn it on |
 | Model download / Windows symlink | Documented ops surface | First-request latency, HF cache |
 
-We do **not** currently: authenticate beyond a shared header key, isolate tenants, stream, batch-NLI on GPU as a service, or persist audit logs. Those are integrator concerns.
+We do **not** currently: isolate tenant data or models, stream, batch-NLI on GPU as a service, or persist audit logs. Per-key tenant labels on Prometheus are sidecar ops, not a platform.
 
 ---
 
@@ -459,6 +466,9 @@ We do **not** currently: authenticate beyond a shared header key, isolate tenant
 | Optional judge | UNCERTAIN band only | Do not let a chat model become the firewall |
 | Inferred ≠ extractive | Tag multi-hop; strict does not release it | Composition is weaker than a copied chunk |
 | Reliability floor | Downgrade sole low-trust citations | Caller can mark scraped/untrusted sources |
+| BN never ships `safe_answer` | `release_authority=claim_status` on every response | Buyers must not hear “Bayesian = calibrated risk” |
+| Label retrieval failure | `evidence_gap` | Operators can fix the retriever instead of blaming the generator |
+| Prometheus + per-key tenants | `/metrics` text; `RAG_EVAL_API_KEYS` | Sidecar ops, not SaaS isolation |
 
 ---
 
@@ -475,6 +485,8 @@ These sit **on the lock**, not in the BN.
 | Source reliability | `source_reliability` on the request | Below `min_support_reliability` → UNCERTAIN, not SUPPORTED |
 | Calibrated fusion | `claims/fusion.py` + `config/fusion.yaml` | Same weights as before; optional piecewise calibration (never raises scores above evidence) |
 | Adversarial + competitor bench | `eval-adversarial` / `eval-benchmark` | Gate vs overlap-only and cosine-only; false-release must stay 0 |
+| Math / code lock | `claims/special.py` | Equations and identifiers can only tighten; never raise support |
+| Retrieval vs generation | `GateResult.evidence_gap` | Weak retrieval is labeled, not silently called a hallucination |
 
 ---
 
@@ -489,4 +501,19 @@ These sit **on the lock**, not in the BN.
 
 ---
 
-*Shreyas G — hallucination-gate v0.9.1. Sole contributor. If a change makes it easier to release an unsupported claim, it is a regression regardless of RAGAS-like averages.*
+## 19. Published safety numbers
+
+Heuristic CI backends on the in-repo held-out + adversarial suites. Re-run:
+
+```bash
+set RAG_EVAL_HEURISTIC=1
+hallucination-gate eval-heldout
+hallucination-gate eval-adversarial
+hallucination-gate eval-benchmark
+```
+
+See [docs/EVAL.md](docs/EVAL.md) for the snapshot. False-release is the SLO (~0). Over-refusal is published, not hidden. Neural `quality` / `quality_plus` numbers belong in *your* customer set — this package does not claim them from MiniLM smoke tests.
+
+---
+
+*Shreyas G — hallucination-gate v0.9.2. Sole contributor. If a change makes it easier to release an unsupported claim, it is a regression regardless of RAGAS-like averages.*

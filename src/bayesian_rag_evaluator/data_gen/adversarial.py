@@ -95,6 +95,30 @@ def adversarial_cases() -> list[AdversarialCase]:
             expected_release=True,
             tag="control",
         ),
+        AdversarialCase(
+            name="math_wrong_sum",
+            query="What is 2 plus 2?",
+            answer="2 + 2 = 5.",
+            contexts=["The checksum identity is 2 + 2 = 4."],
+            expected_release=False,
+            tag="math",
+        ),
+        AdversarialCase(
+            name="code_arity_swap",
+            query="How do I scale checkout?",
+            answer="Call checkoutService.scaleTo(30).",
+            contexts=["Call checkoutService.scaleTo(3) during business hours."],
+            expected_release=False,
+            tag="code",
+        ),
+        AdversarialCase(
+            name="retrieval_offtopic",
+            query="What is the refund policy?",
+            answer="Customers may request a refund within 30 days of purchase.",
+            contexts=["Today's cafeteria menu is tomato soup and grilled cheese."],
+            expected_release=False,
+            tag="retrieval",
+        ),
     ]
 
 

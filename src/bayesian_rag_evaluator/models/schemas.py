@@ -47,6 +47,23 @@ class GateAction(str, Enum):
     ABSTAIN = "abstain"
 
 
+class EvidenceGap(str, Enum):
+    """Why the gate blocked or rewrote — retrieval vs generation vs contradiction.
+
+    none — released; evidence was adequate for the claims that shipped
+    retrieval — retrieved/KB text is too weakly aligned with the query
+    generation — evidence looks adequate; the answer is not supported by it
+    mixed — weak retrieval and unsupported claims
+    contradiction — aligned evidence disagrees with the answer
+    """
+
+    NONE = "none"
+    RETRIEVAL = "retrieval"
+    GENERATION = "generation"
+    MIXED = "mixed"
+    CONTRADICTION = "contradiction"
+
+
 class ImageInput(BaseModel):
     """Image evidence. Provide caption/OCR for heuristic mode; optional path for CLIP."""
 
@@ -112,6 +129,10 @@ class GateResult(BaseModel):
     safe_answer: str
     claims: list[ClaimResult] = Field(default_factory=list)
     dropped_claims: list[str] = Field(default_factory=list)
+    evidence_gap: EvidenceGap = EvidenceGap.NONE
+    retrieval_quality: float | None = None
+    release_authority: Literal["claim_status"] = "claim_status"
+    scores_are_calibrated: bool = False
 
 
 class EvaluateRequest(BaseModel):
@@ -161,6 +182,12 @@ class DiscretizedEvidence(BaseModel):
 
 
 class PosteriorScores(BaseModel):
+    """Discrete BN fusion scores: P(high)+0.5·P(medium).
+
+    These are **not** calibrated probabilities of truth, hallucination, or
+    release risk. They do not decide ``safe_answer`` unless BN veto is on.
+    """
+
     answer_quality: float = Field(..., ge=0.0, le=1.0)
     groundedness: float = Field(..., ge=0.0, le=1.0)
     hallucination_risk: float = Field(..., ge=0.0, le=1.0)
@@ -188,6 +215,9 @@ class EvaluateResponse(BaseModel):
     modalities_used: list[str] = Field(default_factory=list)
     request_id: str | None = None
     latency_ms: float | None = None
+    scores_are_calibrated: bool = False
+    release_authority: Literal["claim_status"] = "claim_status"
+    bn_role: Literal["diagnostic"] = "diagnostic"
 
 
 class SafeAnswerResponse(BaseModel):
@@ -197,6 +227,7 @@ class SafeAnswerResponse(BaseModel):
     safe_answer: str
     released: bool
     latency_ms: float
+    evidence_gap: EvidenceGap = EvidenceGap.NONE
 
 
 class GoldExample(BaseModel):

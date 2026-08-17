@@ -19,7 +19,7 @@ def heldout_examples() -> list[GoldExample]:
     def case(
         query: str,
         answer: str,
-        context: str,
+        context: str | list[str],
         action: GateAction,
         release: bool,
         labels=None,
@@ -32,10 +32,16 @@ def heldout_examples() -> list[GoldExample]:
                 labels, latent = rewrite_l, rewrite_z
             else:
                 labels, latent = pass_l, pass_z
+        if isinstance(context, list):
+            chunks = context
+        elif context:
+            chunks = [context]
+        else:
+            chunks = []
         return GoldExample(
             query=query,
             answer=answer,
-            context_chunks=[context],
+            context_chunks=chunks,
             expected_gate=action,
             expected_release=release,
             labels=labels,
@@ -188,6 +194,48 @@ def heldout_examples() -> list[GoldExample]:
             "What is the maximum file size?",
             "The maximum upload size is 250 megabytes.",
             "The maximum upload size is 25 megabytes.",
+            GateAction.ABSTAIN,
+            False,
+        ),
+        case(
+            "What is 2 plus 2?",
+            "2 + 2 = 4.",
+            "The checksum identity is 2 + 2 = 4.",
+            GateAction.PASS,
+            True,
+        ),
+        case(
+            "What is 2 plus 2?",
+            "2 + 2 = 5.",
+            "The checksum identity is 2 + 2 = 4.",
+            GateAction.ABSTAIN,
+            False,
+        ),
+        case(
+            "How do I scale checkout?",
+            "Call checkoutService.scaleTo(3).",
+            "Call checkoutService.scaleTo(3) during business hours.",
+            GateAction.PASS,
+            True,
+        ),
+        case(
+            "How do I scale checkout?",
+            "Call checkoutService.scaleTo(30).",
+            "Call checkoutService.scaleTo(3) during business hours.",
+            GateAction.ABSTAIN,
+            False,
+        ),
+        case(
+            "What is the refund policy?",
+            "Customers may request a refund within 30 days of purchase.",
+            "Today's cafeteria menu is tomato soup and grilled cheese.",
+            GateAction.ABSTAIN,
+            False,
+        ),
+        case(
+            "What is the office Wi-Fi password?",
+            "The guest network password is orchid-42.",
+            [],
             GateAction.ABSTAIN,
             False,
         ),

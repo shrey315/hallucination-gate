@@ -57,7 +57,7 @@ def status_reason(
 
 
 def numbers_agree(claim: str, evidence: str) -> bool | None:
-    """True if claim numbers appear in evidence, False if both have numbers and they clash, None if no claim numbers."""
+    """True iff every claim number appears in evidence. None if the claim has none."""
     claim_nums = extract_numbers(claim)
     if not claim_nums:
         return None
@@ -66,10 +66,12 @@ def numbers_agree(claim: str, evidence: str) -> bool | None:
         return False
     claim_vals = _to_floats(claim_nums)
     evid_vals = _to_floats(evidence_nums)
+    if not claim_vals:
+        return None
     for value in claim_vals:
-        if any(abs(value - other) < 1e-6 for other in evid_vals):
-            return True
-    return False
+        if not any(abs(value - other) < 1e-6 for other in evid_vals):
+            return False
+    return True
 
 
 def _to_floats(nums: list[str]) -> list[float]:
@@ -139,6 +141,7 @@ def decide_status(
 
 
 def extra_distinctive_tokens(claim: str, evidence: str) -> set[str]:
+    from bayesian_rag_evaluator.claims.special import extra_code_tokens
     from bayesian_rag_evaluator.evidence.synonyms import covers_token
 
     extra: set[str] = set()
@@ -148,6 +151,7 @@ def extra_distinctive_tokens(claim: str, evidence: str) -> set[str]:
             continue
         if not covers_token(tok, evidence_toks):
             extra.add(tok)
+    extra |= extra_code_tokens(claim, evidence)
     return extra
 
 

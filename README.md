@@ -15,7 +15,7 @@ Visual architecture (download): [SVG](docs/architecture-visual.svg) · [PNG](doc
 - **Retrieval:** hit@k, recall@k, MRR, nDCG@k
 - **Regression:** save baseline → diff → fail CI
 - **Latency budget:** p50 / p95 / p99 / max ceilings
-- **Modes:** `ci` (heuristic smoke) vs `quality` (neural); policies `strict` / `balanced`
+- **Modes:** `ci` (heuristic smoke) vs `quality` (MiniLM + DeBERTa-small) vs `quality_plus` (mpnet + DeBERTa-base); policies `strict` / `balanced`
 - **Gate:** pass / rewrite / abstain for production `safe_answer`
 - **Lock upgrades:** structured claims, multi-hop *inferred* (not a release in strict), temporal/negation/scope, source reliability, calibrated fusion
 - **Bench:** `hallucination-gate eval-adversarial` / `eval-benchmark`
@@ -92,11 +92,14 @@ hallucination-gate eval-dataset samples.jsonl \
 from hallucination_gate import HallucinationGate, Evidence
 
 gate = HallucinationGate(
-    quality_mode="quality",  # or "ci" for heuristic smoke only
+    quality_mode="quality",  # "ci" smoke; "quality_plus" for stronger NLI
     policy="balanced",       # or "strict" for max false-release lock
     warm=True,               # preload models — cuts cold-start tails
 )
 result = gate.check(query, answer, context=retrieved_docs)
+# result.release_authority == "claim_status"
+# result.scores_are_calibrated is False
+# result.evidence_gap in {"none","retrieval","generation","mixed","contradiction"}
 return result.text
 ```
 
@@ -117,13 +120,14 @@ ev = Evidence.from_ocr(path="scanned_policy.pdf")
 
 ## Drawbacks (honest)
 
-- **Latency & cost** — neural path adds inference time / GPU·CPU load per sample.
-- **Over-refusal** — conservative gate can abstain on good extractive answers.
-- **Only as good as evidence** — checks support, not world truth; bad retrieval still hurts.
-- **Hard cases** — subtle math/code/reasoning can fool or over-block NLI.
+- **BN is diagnostic.** `safe_answer` is decided by claim status, not by Bayesian posteriors. Those scores are discrete fusion (`P(high)+0.5·P(medium)`), not calibrated P(hallucination).
+- **Latency & cost** — neural path adds inference time / GPU·CPU load per sample. `quality_plus` is heavier on purpose.
+- **Over-refusal** — conservative gate can abstain on good extractive answers. Published rates: [docs/EVAL.md](docs/EVAL.md).
+- **Only as good as evidence** — checks support, not world truth. Bad retrieval is labeled `evidence_gap=retrieval`; the gate cannot invent missing chunks.
+- **Hard cases** — math/code extras and equation clashes are on the lock; multi-hop still is not a free pass in `strict`. Small NLI is a lock, not a theorem prover.
 - **Heuristic ≠ quality gate** — `use_heuristic=True` is for CI smoke, not calibrated faithfulness.
-- **Ops surface** — HF downloads, torch/sentence-transformers weight, Windows symlink quirks.
-- **Not magic** — still needs your domain labels (`relevant_contexts` / `ground_truth`) and human review for hard cases; the stack now covers grounding + retrieval + latency SLOs + regression diffs.
+- **Ops surface** — sidecar Prometheus `/metrics`, per-key tenant *labels*, shared process. Not a multi-tenant platform.
+- **Not magic** — still needs your domain labels (`relevant_contexts` / `ground_truth`) and human review for hard cases.
 
 ## Eval (gate safety)
 
@@ -135,6 +139,8 @@ hallucination-gate eval-heldout
 hallucination-gate eval-adversarial
 hallucination-gate eval-benchmark
 ```
+
+Published false-release and over-refusal: [docs/EVAL.md](docs/EVAL.md).
 
 ## License
 

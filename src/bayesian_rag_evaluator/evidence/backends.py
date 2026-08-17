@@ -10,6 +10,8 @@ from bayesian_rag_evaluator.evidence.cache import EMBED_CACHE, NLI_CACHE, pair_k
 
 DEFAULT_EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 DEFAULT_NLI_MODEL = "cross-encoder/nli-deberta-v3-small"
+QUALITY_PLUS_EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"
+QUALITY_PLUS_NLI_MODEL = "cross-encoder/nli-deberta-v3-base"
 
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 
@@ -384,18 +386,30 @@ def _softmax(x):
 
 
 def create_embedding_backend(
-    use_heuristic: bool = False, model_name: str | None = None
+    use_heuristic: bool = False,
+    model_name: str | None = None,
+    mode: str | None = None,
 ) -> EmbeddingBackend:
     if use_heuristic:
         return HeuristicEmbeddingBackend()
-    name = model_name or os.getenv("RAG_EVAL_EMBED_MODEL") or DEFAULT_EMBED_MODEL
+    name = model_name or os.getenv("RAG_EVAL_EMBED_MODEL")
+    if not name:
+        name = (
+            QUALITY_PLUS_EMBED_MODEL
+            if mode == "quality_plus"
+            else DEFAULT_EMBED_MODEL
+        )
     return SentenceTransformerBackend(name)
 
 
 def create_nli_backend(
-    use_heuristic: bool = False, model_name: str | None = None
+    use_heuristic: bool = False,
+    model_name: str | None = None,
+    mode: str | None = None,
 ) -> NLIBackend:
     if use_heuristic:
         return HeuristicNLIBackend()
-    name = model_name or os.getenv("RAG_EVAL_NLI_MODEL") or DEFAULT_NLI_MODEL
+    name = model_name or os.getenv("RAG_EVAL_NLI_MODEL")
+    if not name:
+        name = QUALITY_PLUS_NLI_MODEL if mode == "quality_plus" else DEFAULT_NLI_MODEL
     return CrossEncoderNLIBackend(name)

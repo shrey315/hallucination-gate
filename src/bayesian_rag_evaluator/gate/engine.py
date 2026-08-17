@@ -9,6 +9,7 @@ from bayesian_rag_evaluator.evidence.scorers import score_completeness
 from bayesian_rag_evaluator.models.schemas import (
     ClaimResult,
     ClaimVerdict,
+    EvidenceGap,
     GateAction,
     GateResult,
     PosteriorScores,
@@ -21,6 +22,39 @@ ABSTAIN_TEXT = (
     "The available knowledge base does not support a verifiable response, "
     "so this answer is withheld to avoid hallucination."
 )
+ABSTAIN_RETRIEVAL = (
+    "Retrieved evidence is too weakly aligned with the question to ground an answer. "
+    "This is a retrieval gap, not a confirmed hallucination. Improve retrieval, then retry."
+)
+
+# Matches the low bin edge for retrieval_quality in thresholds.yaml.
+LOW_RETRIEVAL = 0.40
+HIGH_RETRIEVAL = 0.65
+
+
+def classify_evidence_gap(
+    *,
+    contradicted: bool,
+    has_supported: bool,
+    has_unsupported: bool,
+    retrieval_quality: float | None,
+) -> EvidenceGap:
+    """Label why the user did not get the raw answer. Does not change the lock."""
+    rq = 0.0 if retrieval_quality is None else retrieval_quality
+    if contradicted:
+        return EvidenceGap.CONTRADICTION
+    if has_supported and not has_unsupported:
+        return EvidenceGap.NONE
+    weak_retrieval = rq < LOW_RETRIEVAL
+    if has_supported and has_unsupported:
+        if weak_retrieval:
+            return EvidenceGap.MIXED
+        return EvidenceGap.GENERATION
+    if weak_retrieval:
+        return EvidenceGap.RETRIEVAL
+    if rq >= HIGH_RETRIEVAL:
+        return EvidenceGap.GENERATION
+    return EvidenceGap.MIXED
 
 
 def apply_gate(
@@ -33,6 +67,7 @@ def apply_gate(
     cite_sources: bool = False,
     use_bn_veto: bool = False,
     allow_uncertain_rewrite: bool = False,
+    retrieval_quality: float | None = None,
 ) -> GateResult:
     cfg = load_yaml(thresholds_path or DEFAULT_THRESHOLDS_PATH)
     gate_cfg = cfg.get("gate", {})
@@ -57,11 +92,37 @@ def apply_gate(
         if c.status in {ClaimVerdict.UNSUPPORTED, ClaimVerdict.UNCERTAIN}
     ]
 
+    def stamp(**kwargs) -> GateResult:
+        gap = classify_evidence_gap(
+            contradicted=bool(contradicted),
+            has_supported=bool(supported),
+            has_unsupported=bool(unsupported) or not claims,
+            retrieval_quality=retrieval_quality,
+        )
+        if (
+            kwargs.get("action") == GateAction.ABSTAIN
+            and gap == EvidenceGap.RETRIEVAL
+            and "contradict" not in str(kwargs.get("reason", "")).lower()
+        ):
+            kwargs["reason"] = (
+                "Retrieved evidence is too weakly aligned with the query to ground an answer."
+            )
+            kwargs["safe_answer"] = ABSTAIN_RETRIEVAL
+        return GateResult(
+            **kwargs,
+            evidence_gap=gap,
+            retrieval_quality=retrieval_quality,
+        )
+
     if contradicted:
-        return _abstain(
-            original_answer,
-            claims,
-            _contradiction_reason(contradicted),
+        return stamp(
+            action=GateAction.ABSTAIN,
+            released=False,
+            reason=_contradiction_reason(contradicted),
+            original_answer=original_answer,
+            safe_answer=ABSTAIN_TEXT,
+            claims=claims,
+            dropped_claims=[c.text for c in claims],
         )
 
     unsafe_posteriors = False
@@ -90,7 +151,7 @@ def apply_gate(
                 if _answers_query(
                     query, safe, min_rewrite_complete, min_rewrite_overlap
                 ):
-                    return GateResult(
+                    return stamp(
                         action=GateAction.REWRITE,
                         released=True,
                         reason=(
@@ -104,10 +165,14 @@ def apply_gate(
                             c.text for c in claims if c not in usable
                         ],
                     )
-        return _abstain(
-            original_answer,
-            claims,
-            "No claim is grounded in retrieved or knowledge-base evidence.",
+        return stamp(
+            action=GateAction.ABSTAIN,
+            released=False,
+            reason="No claim is grounded in retrieved or knowledge-base evidence.",
+            original_answer=original_answer,
+            safe_answer=ABSTAIN_TEXT,
+            claims=claims,
+            dropped_claims=[c.text for c in claims],
         )
 
     if unsupported or unsafe_posteriors:
@@ -115,12 +180,16 @@ def apply_gate(
         if not _answers_query(
             query, safe, min_rewrite_complete, min_rewrite_overlap
         ):
-            return _abstain(
-                original_answer,
-                claims,
-                "Grounded fragments remain but they do not answer the user query.",
+            return stamp(
+                action=GateAction.ABSTAIN,
+                released=False,
+                reason="Grounded fragments remain but they do not answer the user query.",
+                original_answer=original_answer,
+                safe_answer=ABSTAIN_TEXT,
+                claims=claims,
+                dropped_claims=[c.text for c in claims],
             )
-        return GateResult(
+        return stamp(
             action=GateAction.REWRITE,
             released=True,
             reason="Ungrounded claims were removed; only evidence-backed statements remain.",
@@ -130,7 +199,7 @@ def apply_gate(
             dropped_claims=[c.text for c in unsupported],
         )
 
-    return GateResult(
+    return stamp(
         action=GateAction.PASS,
         released=True,
         reason="All claims are grounded in the knowledge base.",

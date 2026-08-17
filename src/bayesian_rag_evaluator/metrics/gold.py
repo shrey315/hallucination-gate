@@ -15,6 +15,7 @@ class GateMetrics:
     recall_release: float
     f1_release: float
     false_abstain_rate: float
+    over_refusal_rate: float
     false_release_rate: float
     per_action: dict[str, int]
     confusion: dict[str, dict[str, int]]
@@ -27,6 +28,7 @@ class GateMetrics:
             "recall_release": round(self.recall_release, 4),
             "f1_release": round(self.f1_release, 4),
             "false_abstain_rate": round(self.false_abstain_rate, 4),
+            "over_refusal_rate": round(self.false_abstain_rate, 4),
             "false_release_rate": round(self.false_release_rate, 4),
             "per_action": self.per_action,
             "confusion": self.confusion,
@@ -101,6 +103,7 @@ def evaluate_gold_set(
         recall_release=recall,
         f1_release=f1,
         false_abstain_rate=false_abstain / should_release if should_release else 0.0,
+        over_refusal_rate=false_abstain / should_release if should_release else 0.0,
         false_release_rate=false_release / should_block if should_block else 0.0,
         per_action=dict(pred_counts),
         confusion=confusion,

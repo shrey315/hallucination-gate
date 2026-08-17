@@ -68,8 +68,12 @@ class EvidenceExtractor:
         self.policy = resolve_policy(policy)
         self.align_contexts_flag = align_contexts_flag
         self._use_heuristic = use_heuristic
-        self._embedder = create_embedding_backend(use_heuristic, model_name=embed_model)
-        self._nli = create_nli_backend(use_heuristic, model_name=nli_model)
+        self._embedder = create_embedding_backend(
+            use_heuristic, model_name=embed_model, mode=resolved_mode
+        )
+        self._nli = create_nli_backend(
+            use_heuristic, model_name=nli_model, mode=resolved_mode
+        )
 
     def warm(self) -> None:
         """Load models into memory (cuts cold-start latency on later calls)."""

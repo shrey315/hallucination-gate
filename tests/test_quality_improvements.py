@@ -6,8 +6,10 @@ from hallucination_gate import HallucinationGate, RAGEval
 def test_modes_ci_vs_quality():
     assert resolve_mode("ci") == "ci"
     assert resolve_mode("quality") == "quality"
+    assert resolve_mode("quality_plus") == "quality_plus"
     assert heuristic_for_mode("ci") is True
     assert heuristic_for_mode("quality") is False
+    assert heuristic_for_mode("quality_plus") is False
 
 
 def test_align_contexts_keeps_relevant_first():

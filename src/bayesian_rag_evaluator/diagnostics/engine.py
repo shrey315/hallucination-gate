@@ -101,7 +101,7 @@ def identify_gaps(
                 GapItem(
                     dimension=node,
                     severity=severity,  # type: ignore[arg-type]
-                    driver=f"P({node})={score:.2f}",
+                    driver=f"bn_fusion({node})={score:.2f}",
                 )
             )
 
@@ -132,6 +132,8 @@ def generate_suggestions(
     for gap in gaps:
         if gap.dimension in templates:
             level = gap.driver.split("=")[-1]
+            if level not in {"low", "medium", "high"}:
+                level = gap.severity
             if gap.dimension in INVERSE_NODES:
                 if level in {"high", "medium"}:
                     add(gap.dimension, level if level in templates[gap.dimension] else "high")

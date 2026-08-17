@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-QualityMode = Literal["ci", "quality"]
+QualityMode = Literal["ci", "quality", "quality_plus"]
 PolicyName = Literal["strict", "balanced"]
 
 
@@ -68,17 +68,31 @@ def resolve_policy(name: PolicyName | str | PolicyProfile | None) -> PolicyProfi
 def resolve_mode(mode: QualityMode | str | None = None) -> QualityMode:
     if mode is None:
         raw = os.getenv("HALLUCINATION_GATE_MODE", "").lower()
-        if raw in {"ci", "quality"}:
+        if raw in {"ci", "quality", "quality_plus"}:
             return raw  # type: ignore[return-value]
         if os.getenv("RAG_EVAL_HEURISTIC", "").lower() in {"1", "true", "yes"}:
             return "ci"
         return "quality"
     m = str(mode).lower()
-    if m not in {"ci", "quality"}:
-        raise ValueError("mode must be 'ci' or 'quality'")
+    if m not in {"ci", "quality", "quality_plus"}:
+        raise ValueError("mode must be 'ci', 'quality', or 'quality_plus'")
     return m  # type: ignore[return-value]
 
 
 def heuristic_for_mode(mode: QualityMode) -> bool:
-    """ci → heuristic smoke backends; quality → neural backends."""
+    """ci → heuristic smoke; quality / quality_plus → neural backends."""
     return mode == "ci"
+
+
+def default_models_for_mode(mode: QualityMode | str) -> tuple[str, str]:
+    """(embed_model, nli_model) defaults. quality_plus is opt-in; not CI."""
+    from bayesian_rag_evaluator.evidence.backends import (
+        DEFAULT_EMBED_MODEL,
+        DEFAULT_NLI_MODEL,
+        QUALITY_PLUS_EMBED_MODEL,
+        QUALITY_PLUS_NLI_MODEL,
+    )
+
+    if str(mode) == "quality_plus":
+        return QUALITY_PLUS_EMBED_MODEL, QUALITY_PLUS_NLI_MODEL
+    return DEFAULT_EMBED_MODEL, DEFAULT_NLI_MODEL

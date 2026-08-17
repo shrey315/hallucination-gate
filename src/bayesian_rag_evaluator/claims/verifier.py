@@ -15,6 +15,7 @@ from bayesian_rag_evaluator.claims.policy import (
     numbers_agree,
     status_reason,
 )
+from bayesian_rag_evaluator.claims.special import math_agree
 from bayesian_rag_evaluator.evidence.backends import (
     EmbeddingBackend,
     NLIBackend,
@@ -95,6 +96,8 @@ def verify_claims(
         contra = float(row["contradiction"]) + extra_entity_penalty(claim, unit.content)
         contra = min(1.0, contra)
         entail = float(row["entailment"])
+        if math_agree(claim, unit.content) is False:
+            nums_ok = False
         if nums_ok is False or lits_ok is False:
             contra = max(contra, 0.78)
             entail = min(entail, 0.30)

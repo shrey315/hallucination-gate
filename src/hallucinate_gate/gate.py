@@ -18,7 +18,11 @@ GenerateFn = Callable[..., Any]
 
 @dataclass
 class GatedAnswer:
-    """Safe output for the calling app. ``text`` is what users should see."""
+    """Safe output for the calling app. ``text`` is what users should see.
+
+    ``release_authority`` is always claim status. BN fusion scores are
+    diagnostic only and are **not** calibrated probabilities.
+    """
 
     text: str
     released: bool
@@ -29,6 +33,10 @@ class GatedAnswer:
     latency_ms: float | None = None
     claims: list[dict[str, Any]] = field(default_factory=list)
     raw: EvaluateResponse | None = None
+    evidence_gap: str = "none"
+    retrieval_quality: float | None = None
+    release_authority: str = "claim_status"
+    scores_are_calibrated: bool = False
 
     def __str__(self) -> str:
         return self.text
@@ -74,7 +82,8 @@ class HallucinationGate:
 
     Modes (dataset-agnostic):
       - quality_mode=\"ci\" → heuristic smoke backends
-      - quality_mode=\"quality\" → neural backends (production)
+      - quality_mode=\"quality\" → MiniLM + DeBERTa-small (default neural)
+      - quality_mode=\"quality_plus\" → mpnet + DeBERTa-base (opt-in, heavier)
     Policy:
       - \"strict\" → max false-release lock
       - \"balanced\" → fewer over-refusals (uncertain rewrite + slightly softer support)
@@ -171,6 +180,10 @@ class HallucinationGate:
             latency_ms=result.latency_ms,
             claims=[c.model_dump(mode="json") for c in result.claims],
             raw=result if debug else None,
+            evidence_gap=result.gate.evidence_gap.value,
+            retrieval_quality=result.evidence.retrieval_quality,
+            release_authority=result.release_authority,
+            scores_are_calibrated=result.scores_are_calibrated,
         )
 
     def evaluate(

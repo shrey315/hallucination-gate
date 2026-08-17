@@ -6,6 +6,7 @@ from bayesian_rag_evaluator.claims.extractor import (
 from bayesian_rag_evaluator.claims.fusion import FusionConfig, calibrate, fused_support, load_fusion_config
 from bayesian_rag_evaluator.claims.logic import logic_mismatches
 from bayesian_rag_evaluator.claims.multihop import try_multihop
+from bayesian_rag_evaluator.claims.special import extra_code_tokens, math_agree
 from bayesian_rag_evaluator.claims.verifier import verify_claims
 
 __all__ = [
@@ -19,4 +20,6 @@ __all__ = [
     "load_fusion_config",
     "logic_mismatches",
     "try_multihop",
+    "math_agree",
+    "extra_code_tokens",
 ]

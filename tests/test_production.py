@@ -74,6 +74,7 @@ def test_pdf_text_extraction(tmp_path):
 def test_v1_answer_returns_only_safe_fields(monkeypatch):
     monkeypatch.setenv("RAG_EVAL_HEURISTIC", "1")
     monkeypatch.delenv("RAG_EVAL_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_EVAL_API_KEYS", raising=False)
     from bayesian_rag_evaluator.api import main as api_main
 
     api_main._evaluator = None
@@ -87,7 +88,13 @@ def test_v1_answer_returns_only_safe_fields(monkeypatch):
     resp = client.post("/v1/answer", json=payload)
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data.keys()) == {"request_id", "safe_answer", "released", "latency_ms"}
+    assert set(data.keys()) == {
+        "request_id",
+        "safe_answer",
+        "released",
+        "latency_ms",
+        "evidence_gap",
+    }
     assert "original_answer" not in data
     assert "Refunds are never allowed" not in data["safe_answer"]
 
@@ -95,6 +102,7 @@ def test_v1_answer_returns_only_safe_fields(monkeypatch):
 def test_api_key_required_when_configured(monkeypatch):
     monkeypatch.setenv("RAG_EVAL_HEURISTIC", "1")
     monkeypatch.setenv("RAG_EVAL_API_KEY", "secret-key")
+    monkeypatch.delenv("RAG_EVAL_API_KEYS", raising=False)
     from bayesian_rag_evaluator.api import main as api_main
 
     api_main._evaluator = None
@@ -108,15 +116,54 @@ def test_api_key_required_when_configured(monkeypatch):
     assert denied.status_code == 401
     ok = client.post("/v1/answer", json=payload, headers={"x-api-key": "secret-key"})
     assert ok.status_code == 200
+    bearer = client.post(
+        "/v1/answer", json=payload, headers={"Authorization": "Bearer secret-key"}
+    )
+    assert bearer.status_code == 200
+
+
+def test_multi_tenant_api_keys(monkeypatch):
+    monkeypatch.setenv("RAG_EVAL_HEURISTIC", "1")
+    monkeypatch.delenv("RAG_EVAL_API_KEY", raising=False)
+    monkeypatch.setenv("RAG_EVAL_API_KEYS", "acme:key-acme,globex:key-globex")
+    from bayesian_rag_evaluator.api import main as api_main
+
+    api_main._evaluator = None
+    client = TestClient(api_main.app)
+    payload = {
+        "query": "What is Python?",
+        "answer": "Python is a programming language.",
+        "context_chunks": ["Python is a high-level language."],
+    }
+    denied = client.post("/v1/answer", json=payload)
+    assert denied.status_code == 401
+    mismatch = client.post(
+        "/v1/answer",
+        json=payload,
+        headers={"x-api-key": "key-acme", "x-tenant-id": "globex"},
+    )
+    assert mismatch.status_code == 403
+    ok = client.post(
+        "/v1/answer",
+        json=payload,
+        headers={"x-api-key": "key-acme", "x-tenant-id": "acme"},
+    )
+    assert ok.status_code == 200
 
 
 def test_metrics_endpoint(monkeypatch):
     monkeypatch.setenv("RAG_EVAL_HEURISTIC", "1")
     monkeypatch.delenv("RAG_EVAL_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_EVAL_API_KEYS", raising=False)
     from bayesian_rag_evaluator.api import main as api_main
 
     client = TestClient(api_main.app)
     resp = client.get("/metrics")
     assert resp.status_code == 200
-    assert "requests_total" in resp.json()
-    assert "latency_ms" in resp.json()
+    body = resp.text
+    assert "hallucination_gate_requests_total" in body
+    json_resp = client.get("/metrics.json")
+    assert json_resp.status_code == 200
+    assert "requests_total" in json_resp.json()
+    assert "latency_ms" in json_resp.json()
+    assert json_resp.json().get("isolation") == "process_local"
