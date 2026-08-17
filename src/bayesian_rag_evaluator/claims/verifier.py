@@ -3,13 +3,13 @@ from __future__ import annotations
 import numpy as np
 
 from bayesian_rag_evaluator.claims.extractor import extract_claims
+from bayesian_rag_evaluator.claims.fusion import fused_support
+from bayesian_rag_evaluator.claims.logic import logic_mismatches
+from bayesian_rag_evaluator.claims.multihop import try_multihop
 from bayesian_rag_evaluator.claims.policy import (
-    ALIGN_COVERAGE,
-    ALIGN_SIMILARITY,
     decide_status,
     extra_distinctive_tokens,
     extra_entity_penalty,
-    fused_support,
     is_chunk_aligned,
     literals_agree,
     numbers_agree,
@@ -25,7 +25,7 @@ from bayesian_rag_evaluator.models.schemas import (
     ClaimResult,
     ClaimVerdict,
     EvidenceUnit,
-    MediaType,
+    GroundingKind,
 )
 from bayesian_rag_evaluator.quality import PolicyProfile, STRICT
 
@@ -44,7 +44,8 @@ def verify_claims(
 
     A neighbor chunk with unrelated numbers must not veto a claim that another
     chunk fully supports. Contradiction only wins from *aligned* chunks, and
-    only when no chunk supports the claim.
+    only when no chunk supports the claim. Multi-hop may tag inferred support
+    without silently promoting it to a release under strict policy.
     """
     profile = profile or STRICT
     claims = extract_claims(answer)
@@ -58,6 +59,7 @@ def verify_claims(
                 support_score=0.0,
                 contradiction_score=0.0,
                 reason="No evidence units were provided.",
+                grounding_kind=GroundingKind.UNSUPPORTED,
             )
             for claim in claims
         ]
@@ -76,8 +78,8 @@ def verify_claims(
 
     nli_rows = nli.predict_batch(pairs) if pairs else []
 
-    # Per-claim list of chunk-level hits (status decided against that chunk alone).
     hits_by_claim: list[list[ChunkHit]] = [[] for _ in claims]
+    flags_by_claim: list[list[str]] = [[] for _ in claims]
 
     for (i, j), row, sim_ij in zip(
         pair_index, nli_rows, [sim[i, j] for i, j in pair_index], strict=True
@@ -88,6 +90,8 @@ def verify_claims(
         nums_ok = numbers_agree(claim, unit.content)
         lits_ok = literals_agree(claim, unit.content)
         extras = extra_distinctive_tokens(claim, unit.content)
+        flags = logic_mismatches(claim, unit.content)
+        flags_by_claim[i].extend(flags)
         contra = float(row["contradiction"]) + extra_entity_penalty(claim, unit.content)
         contra = min(1.0, contra)
         entail = float(row["entailment"])
@@ -104,6 +108,7 @@ def verify_claims(
             extra_distinctive=len(extras),
             literals_ok=lits_ok,
             profile=profile,
+            logic_flags=flags,
         )
         hits_by_claim[i].append(
             ChunkHit(
@@ -123,17 +128,40 @@ def verify_claims(
                     extra_distinctive=len(extras),
                     coverage=coverage,
                     contradiction=contra,
+                    logic_flags=flags,
                 ),
+                reliability=unit.reliability,
             )
         )
 
     results: list[ClaimResult] = []
-    for claim, hits in zip(claims, hits_by_claim, strict=True):
-        results.append(_aggregate_claim(claim, hits))
+    for claim, hits, flags in zip(claims, hits_by_claim, flags_by_claim, strict=True):
+        result = _aggregate_claim(claim, hits, profile=profile, logic_flags=_unique(flags))
+        if result.status in {ClaimVerdict.UNSUPPORTED, ClaimVerdict.UNCERTAIN}:
+            hop = try_multihop(claim, hits, units, nli, profile=profile)
+            if hop is not None:
+                result = _from_inferred(claim, hop, hits, profile=profile, logic_flags=_unique(flags))
+        results.append(result)
     return results
 
 
-def _aggregate_claim(claim: str, hits: list[ChunkHit]) -> ClaimResult:
+def _unique(flags: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for flag in flags:
+        if flag not in seen:
+            seen.add(flag)
+            out.append(flag)
+    return out
+
+
+def _aggregate_claim(
+    claim: str,
+    hits: list[ChunkHit],
+    *,
+    profile: PolicyProfile,
+    logic_flags: list[str],
+) -> ClaimResult:
     if not hits:
         return ClaimResult(
             text=claim,
@@ -142,9 +170,10 @@ def _aggregate_claim(claim: str, hits: list[ChunkHit]) -> ClaimResult:
             contradiction_score=0.0,
             reason="No candidate evidence chunks.",
             chunk_hits=[],
+            grounding_kind=GroundingKind.UNSUPPORTED,
+            logic_flags=logic_flags,
         )
 
-    # Prefer higher support, then higher coverage (stable citation choice).
     hits_sorted = sorted(
         hits,
         key=lambda h: (h.support_score, h.coverage, h.similarity),
@@ -153,15 +182,29 @@ def _aggregate_claim(claim: str, hits: list[ChunkHit]) -> ClaimResult:
     supported = [h for h in hits_sorted if h.status == ClaimVerdict.SUPPORTED]
     if supported:
         best = supported[0]
+        if best.reliability < profile.min_support_reliability:
+            return _result_from_hit(
+                claim,
+                ClaimVerdict.UNCERTAIN,
+                best,
+                hits_sorted,
+                reason=(
+                    f"Evidence {best.source_id or 'chunk'} is too low-reliability "
+                    f"({best.reliability:.2f}) to release."
+                ),
+                grounding_kind=GroundingKind.EXTRACTIVE,
+                logic_flags=logic_flags,
+            )
         return _result_from_hit(
             claim,
             ClaimVerdict.SUPPORTED,
             best,
             hits_sorted,
             reason=f"Supported by {best.source_id or 'chunk'}.",
+            grounding_kind=GroundingKind.EXTRACTIVE,
+            logic_flags=logic_flags,
         )
 
-    # Contradiction only from chunks that actually talk about the claim.
     aligned_contra = [
         h
         for h in hits_sorted
@@ -180,6 +223,8 @@ def _aggregate_claim(claim: str, hits: list[ChunkHit]) -> ClaimResult:
             best,
             hits_sorted,
             reason=f"Contradicted by {best.source_id or 'chunk'}: {detail}",
+            grounding_kind=GroundingKind.CONTRADICTED,
+            logic_flags=logic_flags,
         )
 
     uncertain = [h for h in hits_sorted if h.status == ClaimVerdict.UNCERTAIN]
@@ -191,6 +236,8 @@ def _aggregate_claim(claim: str, hits: list[ChunkHit]) -> ClaimResult:
             best,
             hits_sorted,
             reason=f"Partial overlap with {best.source_id or 'chunk'}; not enough to release.",
+            grounding_kind=GroundingKind.EXTRACTIVE,
+            logic_flags=logic_flags,
         )
 
     best = hits_sorted[0]
@@ -203,6 +250,45 @@ def _aggregate_claim(claim: str, hits: list[ChunkHit]) -> ClaimResult:
             f"No aligned support (best chunk {best.source_id or 'n/a'} "
             f"coverage={best.coverage:.2f})."
         ),
+        grounding_kind=GroundingKind.UNSUPPORTED,
+        logic_flags=logic_flags,
+    )
+
+
+def _from_inferred(
+    claim: str,
+    hop: ChunkHit,
+    hits: list[ChunkHit],
+    *,
+    profile: PolicyProfile,
+    logic_flags: list[str],
+) -> ClaimResult:
+    hops = [p for p in (hop.source_id or "").split("+") if p]
+    all_hits = list(hits) + [hop]
+    if hop.reliability < profile.min_support_reliability:
+        status = ClaimVerdict.UNCERTAIN
+        reason = (
+            f"Inferred from {' + '.join(hops)} but source reliability "
+            f"{hop.reliability:.2f} is below the release floor."
+        )
+    elif profile.allow_inferred_release:
+        status = ClaimVerdict.SUPPORTED
+        reason = hop.reason or f"Inferred from {' + '.join(hops)}."
+    else:
+        status = ClaimVerdict.UNCERTAIN
+        reason = (
+            f"Inferred from {' + '.join(hops)} — not extractive; "
+            "strict policy will not release inferred claims."
+        )
+    return _result_from_hit(
+        claim,
+        status,
+        hop,
+        all_hits,
+        reason=reason,
+        grounding_kind=GroundingKind.INFERRED,
+        hop_source_ids=hops,
+        logic_flags=logic_flags,
     )
 
 
@@ -213,12 +299,23 @@ def _result_from_hit(
     all_hits: list[ChunkHit],
     *,
     reason: str,
+    grounding_kind: GroundingKind | None = None,
+    hop_source_ids: list[str] | None = None,
+    logic_flags: list[str] | None = None,
 ) -> ClaimResult:
     show_citation = status in {
         ClaimVerdict.SUPPORTED,
         ClaimVerdict.CONTRADICTED,
         ClaimVerdict.UNCERTAIN,
     }
+    kind = grounding_kind
+    if kind is None:
+        if status == ClaimVerdict.SUPPORTED:
+            kind = GroundingKind.EXTRACTIVE
+        elif status == ClaimVerdict.CONTRADICTED:
+            kind = GroundingKind.CONTRADICTED
+        else:
+            kind = GroundingKind.UNSUPPORTED
     return ClaimResult(
         text=claim,
         status=status,
@@ -229,6 +326,10 @@ def _result_from_hit(
         modality=best.modality,
         reason=reason,
         chunk_hits=all_hits,
+        grounding_kind=kind,
+        hop_source_ids=hop_source_ids or [],
+        logic_flags=logic_flags or [],
+        reliability=best.reliability,
     )
 
 

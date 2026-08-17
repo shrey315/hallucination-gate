@@ -45,6 +45,10 @@ class GatedAnswer:
                     "source_id": claim.get("source_id"),
                     "reason": claim.get("reason"),
                     "citation": claim.get("citation"),
+                    "grounding_kind": claim.get("grounding_kind"),
+                    "hop_source_ids": claim.get("hop_source_ids") or [],
+                    "logic_flags": claim.get("logic_flags") or [],
+                    "reliability": claim.get("reliability"),
                     "chunk_hits": [
                         {
                             "source_id": h.get("source_id"),
@@ -124,6 +128,7 @@ class HallucinationGate:
         pdfs: list[str] | None = None,
         strict: bool | None = None,
         debug: bool = False,
+        source_reliability: dict[str, float] | None = None,
     ) -> GatedAnswer:
         """Verify an existing model answer against caller-supplied evidence."""
         ev = evidence or Evidence(
@@ -140,6 +145,7 @@ class HallucinationGate:
         if kb is not None and evidence is not None:
             ev.kb = kb
 
+        reliability = source_reliability or getattr(ev, "source_reliability", None) or {}
         request = EvaluateRequest(
             query=query,
             answer=answer,
@@ -152,6 +158,7 @@ class HallucinationGate:
             pdf_paths=ev.pdfs or [],
             model_type=ModelType(mode or self.mode),
             strict=self.strict if strict is None else strict,
+            source_reliability=reliability,
         )
         result = self._evaluator.evaluate(request)
         return GatedAnswer(

@@ -30,7 +30,7 @@ try:
 except Exception:  # pragma: no cover
     BALANCED = STRICT = PolicyProfile = resolve_mode = resolve_policy = None  # type: ignore
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",

@@ -26,6 +26,11 @@ class PolicyProfile:
     allow_uncertain_rewrite: bool = False
     # Keep at most this many query/answer-aligned chunks for scoring (None = all).
     max_aligned_chunks: int | None = None
+    # Multi-hop: jointly supported claims. Strict keeps them UNCERTAIN (not a release).
+    enable_multihop: bool = True
+    allow_inferred_release: bool = False
+    # Chunks below this reliability cannot be the sole SUPPORTED citation.
+    min_support_reliability: float = 0.45
 
 
 STRICT = PolicyProfile(name="strict")
@@ -40,6 +45,9 @@ BALANCED = PolicyProfile(
     uncertain_coverage=0.36,
     allow_uncertain_rewrite=True,
     max_aligned_chunks=5,
+    enable_multihop=True,
+    allow_inferred_release=True,
+    min_support_reliability=0.30,
 )
 
 PROFILES: dict[str, PolicyProfile] = {

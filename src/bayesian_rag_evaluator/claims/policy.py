@@ -37,11 +37,14 @@ def status_reason(
     extra_distinctive: int,
     coverage: float,
     contradiction: float,
+    logic_flags: list[str] | None = None,
 ) -> str:
     if numbers_ok is False:
         return "numeric mismatch with this chunk"
     if literals_ok is False:
         return "quoted literal missing from this chunk"
+    if logic_flags:
+        return "logic mismatch: " + ",".join(logic_flags)
     if status == ClaimVerdict.CONTRADICTED:
         if extra_distinctive >= 2:
             return "claim adds content words absent from this chunk"
@@ -81,8 +84,9 @@ def _to_floats(nums: list[str]) -> list[float]:
 
 def fused_support(entailment: float, similarity: float, coverage: float) -> float:
     """Weighted support. Does not allow similarity to override missing coverage."""
-    lexical = 0.65 * coverage + 0.35 * similarity
-    return max(0.0, min(1.0, 0.55 * entailment + 0.45 * lexical))
+    from bayesian_rag_evaluator.claims.fusion import fused_support as _fused
+
+    return _fused(entailment, similarity, coverage)
 
 
 def decide_status(
@@ -94,10 +98,16 @@ def decide_status(
     extra_distinctive: int = 0,
     literals_ok: bool | None = None,
     profile: PolicyProfile | None = None,
+    logic_flags: list[str] | None = None,
 ) -> ClaimVerdict:
     from bayesian_rag_evaluator.quality import STRICT
 
     p = profile or STRICT
+    flags = logic_flags or []
+    if flags:
+        from bayesian_rag_evaluator.claims.logic import logic_penalty
+
+        contradiction = min(1.0, contradiction + logic_penalty(flags))
     if numbers_ok is False or literals_ok is False:
         contradiction = max(contradiction, 0.78)
         entailment = min(entailment, 0.30)

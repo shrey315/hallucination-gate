@@ -55,6 +55,7 @@ class Evidence:
         documents: Any = None,
         pdfs: list[str] | None = None,
         audio: Any = None,
+        source_reliability: dict[str, float] | None = None,
     ) -> None:
         self.context = context
         self.kb = kb
@@ -63,6 +64,7 @@ class Evidence:
         self.documents = documents
         self.pdfs = pdfs or []
         self.audio = audio
+        self.source_reliability = source_reliability or {}
 
     @classmethod
     def rag(cls, chunks: Any, **extra: Any) -> Evidence:

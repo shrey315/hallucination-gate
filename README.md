@@ -7,12 +7,18 @@
 
 **RAG quality system + conservative release gate** for RAG and fine-tuned LLMs.
 
+End-to-end system design (pipeline, claim lock, BN, eval, sidecar): **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+Visual architecture (download): [SVG](docs/architecture-visual.svg) · [PNG](docs/architecture-visual.png)
+
 - **Eval:** claim-level faithfulness / relevancy / context metrics
 - **Retrieval:** hit@k, recall@k, MRR, nDCG@k
 - **Regression:** save baseline → diff → fail CI
 - **Latency budget:** p50 / p95 / p99 / max ceilings
 - **Modes:** `ci` (heuristic smoke) vs `quality` (neural); policies `strict` / `balanced`
 - **Gate:** pass / rewrite / abstain for production `safe_answer`
+- **Lock upgrades:** structured claims, multi-hop *inferred* (not a release in strict), temporal/negation/scope, source reliability, calibrated fusion
+- **Bench:** `hallucination-gate eval-adversarial` / `eval-benchmark`
 
 Author: **Shreyas G**.
 
@@ -126,6 +132,8 @@ pip install -e ".[dev]"
 set RAG_EVAL_HEURISTIC=1
 pytest -q -m "not neural"
 hallucination-gate eval-heldout
+hallucination-gate eval-adversarial
+hallucination-gate eval-benchmark
 ```
 
 ## License

@@ -26,6 +26,21 @@ class ClaimVerdict(str, Enum):
     UNCERTAIN = "uncertain"
 
 
+class GroundingKind(str, Enum):
+    """How a claim relates to evidence. Distinct from release status.
+
+    extractive — one chunk copies/paraphrases the claim
+    inferred — two+ chunks jointly support it (multi-hop); not a free pass
+    unsupported — no extractive or inferred support
+    contradicted — aligned evidence disagrees
+    """
+
+    EXTRACTIVE = "extractive"
+    INFERRED = "inferred"
+    UNSUPPORTED = "unsupported"
+    CONTRADICTED = "contradicted"
+
+
 class GateAction(str, Enum):
     PASS = "pass"
     REWRITE = "rewrite"
@@ -53,6 +68,7 @@ class EvidenceUnit(BaseModel):
     content: str
     modality: MediaType = MediaType.TEXT
     source_id: str | None = None
+    reliability: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class ChunkHit(BaseModel):
@@ -68,6 +84,8 @@ class ChunkHit(BaseModel):
     citation: str | None = None
     modality: MediaType = MediaType.TEXT
     reason: str | None = None
+    reliability: float = Field(default=1.0, ge=0.0, le=1.0)
+    hop: bool = False
 
 
 class ClaimResult(BaseModel):
@@ -80,6 +98,10 @@ class ClaimResult(BaseModel):
     modality: MediaType = MediaType.TEXT
     reason: str | None = None
     chunk_hits: list[ChunkHit] = Field(default_factory=list)
+    grounding_kind: GroundingKind = GroundingKind.UNSUPPORTED
+    hop_source_ids: list[str] = Field(default_factory=list)
+    logic_flags: list[str] = Field(default_factory=list)
+    reliability: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class GateResult(BaseModel):
@@ -106,6 +128,10 @@ class EvaluateRequest(BaseModel):
     strict: bool = Field(
         default=True,
         description="If true, ungrounded or contradicted claims are rewritten or blocked.",
+    )
+    source_reliability: dict[str, float] = Field(
+        default_factory=dict,
+        description="Optional reliability in [0,1] keyed by source_id (e.g. context:0).",
     )
 
 

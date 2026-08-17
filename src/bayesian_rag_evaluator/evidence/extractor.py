@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from bayesian_rag_evaluator.claims.reliability import apply_source_reliability
 from bayesian_rag_evaluator.claims.verifier import (
     max_contradiction,
     unsupported_ratio,
@@ -89,7 +90,7 @@ class EvidenceExtractor:
                 self._embedder,
                 max_chunks=self.policy.max_aligned_chunks,
             )
-        return build_evidence_store(
+        units = build_evidence_store(
             context_chunks=context_chunks,
             kb_chunks=request.kb_chunks,
             images=images,
@@ -97,6 +98,7 @@ class EvidenceExtractor:
             documents=documents,
             audio_transcripts=request.audio_transcripts,
         )
+        return apply_source_reliability(units, request.source_reliability)
 
     def extract_claims(
         self,

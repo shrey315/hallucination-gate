@@ -216,5 +216,24 @@ def eval_dataset_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("eval-adversarial")
+def eval_adversarial_cmd() -> None:
+    """False-release suite: negation, numbers, entities, scope, time, reliability."""
+    from bayesian_rag_evaluator.metrics.benchmark import run_adversarial_suite
+
+    payload = run_adversarial_suite()
+    console.print_json(json.dumps(payload))
+    if payload["false_release_rate"] > 0:
+        raise typer.Exit(code=1)
+
+
+@app.command("eval-benchmark")
+def eval_benchmark_cmd() -> None:
+    """Compare hallucination-gate vs overlap-only and cosine-only baselines."""
+    from bayesian_rag_evaluator.metrics.benchmark import run_competitor_benchmark
+
+    console.print_json(json.dumps(run_competitor_benchmark()))
+
+
 if __name__ == "__main__":
     app()
