@@ -7,12 +7,6 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from bayesian_rag_evaluator.bn.calibration import (
-    learn_cpds_from_data,
-    load_labeled_examples,
-    save_learned_model,
-    tune_thresholds_from_labels,
-)
 from bayesian_rag_evaluator.data_gen.gold import generate_gold_examples, gold_to_labeled, write_gold_jsonl
 from bayesian_rag_evaluator.data_gen.heldout import heldout_examples
 from bayesian_rag_evaluator.evaluator import DiagnosticEvaluator
@@ -125,9 +119,17 @@ def calibrate_cmd(
     output_model: Path = typer.Option(Path("config/learned_bn.pkl")),
 ) -> None:
     if labels_path:
+        from bayesian_rag_evaluator.bn.calibration import load_labeled_examples
+
         examples = load_labeled_examples(labels_path)
     else:
         examples = gold_to_labeled(generate_gold_examples(n=n))
+    from bayesian_rag_evaluator.bn.calibration import (
+        learn_cpds_from_data,
+        save_learned_model,
+        tune_thresholds_from_labels,
+    )
+
     model = learn_cpds_from_data(examples)
     thresholds = tune_thresholds_from_labels(examples)
     save_learned_model(model, output_model)
@@ -138,14 +140,63 @@ def calibrate_cmd(
     console.print(f"Saved learned network to {output_model}")
 
 
-@app.command("eval-heldout")
-def eval_heldout_cmd() -> None:
-    """Report false-release and over-refusal on the held-out domain set."""
-    evaluator = DiagnosticEvaluator(
-        use_heuristic=True, policy="strict", align_contexts=False
+def _gate_evaluator(*, heuristic: bool, neural: bool, mode: str | None = None) -> DiagnosticEvaluator:
+    if neural:
+        return DiagnosticEvaluator(
+            use_heuristic=False, mode=mode or "quality", policy="strict", align_contexts=False
+        )
+    return DiagnosticEvaluator(
+        use_heuristic=True if mode in {None, "ci"} else None,
+        mode=mode,
+        policy="strict",
+        align_contexts=False,
     )
+
+
+@app.command("eval-heldout")
+def eval_heldout_cmd(
+    neural: bool = typer.Option(False, help="Use quality (MiniLM+DeBERTa) backends"),
+    mode: str | None = typer.Option(None, help="ci | quality | quality_plus"),
+) -> None:
+    """Report false-release and over-refusal on the held-out domain set."""
+    evaluator = _gate_evaluator(heuristic=not neural, neural=neural, mode=mode)
     metrics = evaluate_gold_set(heldout_examples(), evaluator=evaluator)
-    console.print_json(json.dumps(metrics.as_dict()))
+    payload = metrics.as_dict()
+    payload["backend"] = "neural" if neural or (mode and mode != "ci") else "heuristic"
+    console.print_json(json.dumps(payload))
+
+
+@app.command("eval-corpus")
+def eval_corpus_cmd(
+    path: Path | None = typer.Argument(
+        None,
+        help="JSON/JSONL of {query, answer, contexts, expected_release}. Omit for the in-repo corpus.",
+    ),
+    heuristic: bool = typer.Option(True, help="Heuristic backends (CI-friendly)"),
+    neural: bool = typer.Option(False, help="Use quality (MiniLM+DeBERTa) backends"),
+) -> None:
+    """Score false-release / over-refusal on labeled traces (in-repo or your DB)."""
+    from bayesian_rag_evaluator.data_gen.corpus import inrepo_corpus_examples
+    from bayesian_rag_evaluator.metrics.gold import load_corpus_examples
+
+    if path is None:
+        examples = inrepo_corpus_examples()
+        source = "inrepo_corpus"
+    else:
+        examples = load_corpus_examples(path)
+        source = str(path)
+    evaluator = _gate_evaluator(heuristic=heuristic and not neural, neural=neural)
+    metrics = evaluate_gold_set(examples, evaluator=evaluator)
+    payload = metrics.as_dict()
+    payload["source"] = source
+    payload["backend"] = "neural" if neural else "heuristic"
+    payload["note"] = (
+        "In-repo corpus is packaged FAQ-style labels, not a customer DB. "
+        "Pass your own JSONL for production buy-off."
+    )
+    console.print_json(json.dumps(payload))
+    if metrics.false_release_rate > 0:
+        raise typer.Exit(code=1)
 
 
 @app.command("eval-gold")
@@ -217,11 +268,15 @@ def eval_dataset_cmd(
 
 
 @app.command("eval-adversarial")
-def eval_adversarial_cmd() -> None:
+def eval_adversarial_cmd(
+    neural: bool = typer.Option(False, help="Use quality (MiniLM+DeBERTa) backends"),
+) -> None:
     """False-release suite: negation, numbers, entities, scope, time, reliability."""
     from bayesian_rag_evaluator.metrics.benchmark import run_adversarial_suite
 
-    payload = run_adversarial_suite()
+    evaluator = _gate_evaluator(heuristic=not neural, neural=neural)
+    payload = run_adversarial_suite(evaluator=evaluator)
+    payload["backend"] = "neural" if neural else "heuristic"
     console.print_json(json.dumps(payload))
     if payload["false_release_rate"] > 0:
         raise typer.Exit(code=1)

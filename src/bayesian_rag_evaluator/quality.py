@@ -26,7 +26,8 @@ class PolicyProfile:
     allow_uncertain_rewrite: bool = False
     # Keep at most this many query/answer-aligned chunks for scoring (None = all).
     max_aligned_chunks: int | None = None
-    # Multi-hop: jointly supported claims. Strict keeps them UNCERTAIN (not a release).
+    # Multi-hop: composed extractive (AND of attested conjuncts) may release.
+    # Speculative NLI-only joins stay inferred and are not a strict release.
     enable_multihop: bool = True
     allow_inferred_release: bool = False
     # Chunks below this reliability cannot be the sole SUPPORTED citation.

@@ -108,11 +108,17 @@ class EvidenceExtractor:
         self,
         answer: str,
         units: list[EvidenceUnit],
+        query: str = "",
     ) -> list[ClaimResult]:
         from bayesian_rag_evaluator.judge import refine_uncertain_claims
 
         claims = verify_claims(
-            answer, units, self._embedder, self._nli, profile=self.policy
+            answer,
+            units,
+            self._embedder,
+            self._nli,
+            profile=self.policy,
+            query=query,
         )
         return refine_uncertain_claims(claims, units)
 
@@ -142,7 +148,9 @@ class EvidenceExtractor:
         grounding_chunks = grounding_texts(units)
 
         if claims is None:
-            claims = verify_claims(answer, units, self._embedder, self._nli)
+            claims = verify_claims(
+                answer, units, self._embedder, self._nli, query=query
+            )
 
         retrieval_quality = score_retrieval_quality(
             query, grounding_chunks, self._embedder

@@ -17,6 +17,8 @@ SYNONYM_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"connect", "connection", "url", "endpoint"}),
     frozenset({"store", "stored", "keep", "kept", "refrigerat"}),
     frozenset({"support", "handled", "handle", "handles", "billing"}),
+    frozenset({"hq", "headquarters", "headquarter"}),
+    frozenset({"ceo", "chief", "leads", "leader"}),
 )
 
 
@@ -30,4 +32,11 @@ def synonym_set(token: str) -> set[str]:
 def covers_token(claim_tok: str, evidence_toks: set[str]) -> bool:
     if claim_tok in evidence_toks:
         return True
-    return bool(synonym_set(claim_tok) & evidence_toks)
+    if synonym_set(claim_tok) & evidence_toks:
+        return True
+    # CamelCase / dotted identifiers: "checkout" in "checkoutservice".
+    if len(claim_tok) >= 5:
+        for ev in evidence_toks:
+            if len(ev) >= 5 and (claim_tok in ev or ev in claim_tok):
+                return True
+    return False

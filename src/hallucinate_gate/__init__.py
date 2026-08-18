@@ -1,36 +1,33 @@
-"""hallucinate_gate — RAG quality eval + conservative hallucination firewall."""
+"""Back-compat alias. Use ``from hallucination_gate import HallucinationGate``."""
 
-from hallucinate_gate.evidence import Evidence, ImageEvidence, TableEvidence
-from hallucinate_gate.eval import (
+from hallucination_gate import (
+    BALANCED,
     DEFAULT_METRICS,
+    Evidence,
     EvalReport,
+    GatedAnswer,
+    HallucinationGate,
+    ImageEvidence,
     LatencyBudget,
     LatencyReport,
+    PolicyProfile,
     RAGEval,
     RegressionResult,
     RetrievalScores,
+    STRICT,
     SampleMetrics,
     SampleResult,
+    TableEvidence,
     compare_to_baseline,
     evaluate,
     load_baseline,
+    resolve_mode,
+    resolve_policy,
     save_baseline,
     score_retrieval,
 )
-from hallucinate_gate.gate import GatedAnswer, HallucinationGate
 
-try:
-    from bayesian_rag_evaluator.quality import (
-        BALANCED,
-        STRICT,
-        PolicyProfile,
-        resolve_mode,
-        resolve_policy,
-    )
-except Exception:  # pragma: no cover
-    BALANCED = STRICT = PolicyProfile = resolve_mode = resolve_policy = None  # type: ignore
-
-__version__ = "0.9.2"
+__version__ = "0.9.3"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",
@@ -59,7 +56,7 @@ __all__ = [
 ]
 
 try:
-    from bayesian_rag_evaluator.evidence.ocr import OcrResult, ocr_available, ocr_image
+    from hallucination_gate import OcrResult, ocr_available, ocr_image
 
     __all__ += ["OcrResult", "ocr_available", "ocr_image"]
 except Exception:  # pragma: no cover

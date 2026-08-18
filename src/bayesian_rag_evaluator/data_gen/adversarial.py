@@ -119,6 +119,68 @@ def adversarial_cases() -> list[AdversarialCase]:
             expected_release=False,
             tag="retrieval",
         ),
+        AdversarialCase(
+            name="faithful_wrong_chunk",
+            query="What is the refund policy?",
+            answer="Today's cafeteria menu is tomato soup and grilled cheese.",
+            contexts=["Today's cafeteria menu is tomato soup and grilled cheese."],
+            expected_release=False,
+            tag="retrieval",
+            notes="Faithful to retrieved docs that do not answer the query.",
+        ),
+        AdversarialCase(
+            name="fluent_federal_pivot",
+            query="What is the warranty?",
+            answer=(
+                "The Titan watch has a 2-year warranty covering manufacturing defects "
+                "as required by federal law worldwide including ISO 9001."
+            ),
+            contexts=["The Titan watch has a 2-year warranty covering manufacturing defects."],
+            expected_release=False,
+            tag="fluent",
+        ),
+        AdversarialCase(
+            name="fluent_pursuant",
+            query="What is the refund policy?",
+            answer="Customers may request a refund within 30 days of purchase pursuant to GDPR article 17.",
+            contexts=["Customers may request a refund within 30 days of purchase."],
+            expected_release=False,
+            tag="fluent",
+        ),
+        AdversarialCase(
+            name="fluent_unattested_tail",
+            query="What is the warranty?",
+            answer=(
+                "The Titan watch has a 2-year warranty covering manufacturing defects, "
+                "valid in every country on earth without exception."
+            ),
+            contexts=["The Titan watch has a 2-year warranty covering manufacturing defects."],
+            expected_release=False,
+            tag="fluent",
+        ),
+        AdversarialCase(
+            name="composed_two_hop",
+            query="Where is HQ and who leads the company?",
+            answer="Headquarters is in Austin and the CEO is Jordan Lee.",
+            contexts=[
+                "Acme headquarters is in Austin, Texas.",
+                "Jordan Lee is the CEO of Acme.",
+            ],
+            expected_release=True,
+            tag="composed",
+        ),
+        AdversarialCase(
+            name="composed_three_hop",
+            query="Where is HQ, who is CEO, and when was Acme founded?",
+            answer="Headquarters is in Austin, the CEO is Jordan Lee, and Acme was founded in 2011.",
+            contexts=[
+                "Acme headquarters is in Austin, Texas.",
+                "Jordan Lee is the CEO of Acme.",
+                "Acme was founded in 2011.",
+            ],
+            expected_release=True,
+            tag="composed",
+        ),
     ]
 
 
@@ -134,7 +196,7 @@ def inference_cases() -> list[AdversarialCase]:
                 "Jordan Lee is the CEO of Acme.",
             ],
             expected_release=True,
-            tag="inferred",
-            notes="Balanced may release as inferred; strict should tag inferred and not false-release junk.",
+            tag="composed",
+            notes="AND of extractive facts across chunks; strict may release as composed.",
         ),
     ]

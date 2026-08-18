@@ -141,7 +141,10 @@ def decide_status(
 
 
 def extra_distinctive_tokens(claim: str, evidence: str) -> set[str]:
-    from bayesian_rag_evaluator.claims.special import extra_code_tokens
+    from bayesian_rag_evaluator.claims.special import (
+        extra_code_tokens,
+        fluent_unattested_justification,
+    )
     from bayesian_rag_evaluator.evidence.synonyms import covers_token
 
     extra: set[str] = set()
@@ -152,6 +155,9 @@ def extra_distinctive_tokens(claim: str, evidence: str) -> set[str]:
         if not covers_token(tok, evidence_toks):
             extra.add(tok)
     extra |= extra_code_tokens(claim, evidence)
+    if fluent_unattested_justification(claim, evidence):
+        extra.add("fluent_continuation")
+        extra.add("unattested_tail")
     return extra
 
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from bayesian_rag_evaluator.bn.discretize import load_yaml
 from bayesian_rag_evaluator.config_paths import config_file
-from bayesian_rag_evaluator.evidence.backends import jaccard_similarity
+from bayesian_rag_evaluator.evidence.backends import content_tokens, jaccard_similarity
 from bayesian_rag_evaluator.evidence.scorers import score_completeness
 from bayesian_rag_evaluator.models.schemas import (
     ClaimResult,
@@ -12,6 +12,7 @@ from bayesian_rag_evaluator.models.schemas import (
     EvidenceGap,
     GateAction,
     GateResult,
+    GroundingKind,
     PosteriorScores,
 )
 
@@ -99,15 +100,19 @@ def apply_gate(
             has_unsupported=bool(unsupported) or not claims,
             retrieval_quality=retrieval_quality,
         )
+        rq_stamp = 0.0 if retrieval_quality is None else retrieval_quality
         if (
             kwargs.get("action") == GateAction.ABSTAIN
-            and gap == EvidenceGap.RETRIEVAL
-            and "contradict" not in str(kwargs.get("reason", "")).lower()
+            and not contradicted
+            and retrieval_quality is not None
+            and rq_stamp < LOW_RETRIEVAL
         ):
-            kwargs["reason"] = (
-                "Retrieved evidence is too weakly aligned with the query to ground an answer."
-            )
-            kwargs["safe_answer"] = ABSTAIN_RETRIEVAL
+            gap = EvidenceGap.RETRIEVAL
+            if "contradict" not in str(kwargs.get("reason", "")).lower():
+                kwargs["reason"] = (
+                    "Retrieved evidence is too weakly aligned with the query to ground an answer."
+                )
+                kwargs["safe_answer"] = ABSTAIN_RETRIEVAL
         return GateResult(
             **kwargs,
             evidence_gap=gap,
@@ -171,6 +176,31 @@ def apply_gate(
             reason="No claim is grounded in retrieved or knowledge-base evidence.",
             original_answer=original_answer,
             safe_answer=ABSTAIN_TEXT,
+            claims=claims,
+            dropped_claims=[c.text for c in claims],
+        )
+
+    # Faithful to the *wrong* docs: chunks do not match the question.
+    # Skip ultra-thin queries (e.g. "2 plus 2") where retrieval overlap is uninformative.
+    # Skip composed / multi-source answers: each chunk matches part of the query.
+    multi_source = len({c.source_id for c in supported if c.source_id}) >= 2
+    composed = any(c.grounding_kind == GroundingKind.COMPOSED for c in supported)
+    if (
+        supported
+        and retrieval_quality is not None
+        and retrieval_quality < LOW_RETRIEVAL
+        and len(content_tokens(query)) >= 2
+        and not multi_source
+        and not composed
+    ):
+        return stamp(
+            action=GateAction.ABSTAIN,
+            released=False,
+            reason=(
+                "Retrieved evidence is too weakly aligned with the query to ground an answer."
+            ),
+            original_answer=original_answer,
+            safe_answer=ABSTAIN_RETRIEVAL,
             claims=claims,
             dropped_claims=[c.text for c in claims],
         )

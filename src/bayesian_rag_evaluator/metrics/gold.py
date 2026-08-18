@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 from bayesian_rag_evaluator.evaluator import DiagnosticEvaluator
-from bayesian_rag_evaluator.models.schemas import EvaluateRequest, GoldExample
+from bayesian_rag_evaluator.models.schemas import EvaluateRequest, GateAction, GoldExample
 
 
 @dataclass
@@ -64,6 +66,7 @@ def evaluate_gold_set(
                 context_chunks=ex.context_chunks,
                 model_type=ex.model_type,
                 strict=True,
+                source_reliability=getattr(ex, "source_reliability", None) or {},
             )
         )
         pred = result.gate.action.value
@@ -108,3 +111,67 @@ def evaluate_gold_set(
         per_action=dict(pred_counts),
         confusion=confusion,
     )
+
+
+def load_corpus_examples(path: Path) -> list[GoldExample]:
+    """Load labeled {query, answer, contexts, expected_release} JSON/JSONL.
+
+    This is the buy-off path for *your* retrieval DB. Dummy BN labels are
+    filled in; only gate action / release are scored.
+    """
+    from bayesian_rag_evaluator.data_gen.gold import _abstain_labels, _pass_labels, _rewrite_labels
+
+    raw_items = _read_json_or_jsonl(path)
+    examples: list[GoldExample] = []
+    for item in raw_items:
+        release = bool(item.get("expected_release", item.get("release", False)))
+        gate_raw = item.get("expected_gate") or item.get("expected_action")
+        if gate_raw:
+            action = GateAction(str(gate_raw).lower())
+        else:
+            action = GateAction.PASS if release else GateAction.ABSTAIN
+        if action == GateAction.REWRITE:
+            labels, latent = _rewrite_labels()
+        elif release:
+            labels, latent = _pass_labels()
+        else:
+            labels, latent = _abstain_labels()
+        chunks = item.get("context_chunks") or item.get("contexts") or item.get("context") or []
+        if isinstance(chunks, str):
+            chunks = [chunks]
+        examples.append(
+            GoldExample(
+                query=str(item["query"]),
+                answer=str(item["answer"]),
+                context_chunks=list(chunks),
+                expected_gate=action,
+                expected_release=release,
+                labels=labels,
+                latent_labels=latent,
+                source_reliability=dict(item.get("source_reliability") or {}),
+            )
+        )
+    if not examples:
+        raise ValueError(f"No labeled examples in {path}")
+    return examples
+
+
+def _read_json_or_jsonl(path: Path) -> list[dict]:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    if path.suffix in {".jsonl", ".ndjson"} or (not text.startswith("[") and not text.startswith("{")):
+        rows = []
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+        return rows
+    data = json.loads(text)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and "examples" in data:
+        return list(data["examples"])
+    if isinstance(data, dict):
+        return [data]
+    return []

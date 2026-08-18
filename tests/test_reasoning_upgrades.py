@@ -103,9 +103,9 @@ def test_multihop_inferred_strict_does_not_treat_as_extractive_release_junk():
     assert result.gate.released is False
 
 
-def test_multihop_true_composition_tagged_inferred():
+def test_multihop_true_composition_releases_as_composed():
     result = _eval(
-        policy="balanced",
+        policy="strict",
         query="Where is HQ and who leads the company?",
         answer="Headquarters is in Austin and the CEO is Jordan Lee.",
         context_chunks=[
@@ -114,12 +114,12 @@ def test_multihop_true_composition_tagged_inferred():
         ],
     )
     kinds = {c.grounding_kind.value for c in result.claims}
-    # Either inferred (joint) or extractive if one chunk was enough; never contradicted.
     assert "contradicted" not in kinds
-    if "inferred" in kinds:
-        hop = next(c for c in result.claims if c.grounding_kind.value == "inferred")
+    assert result.gate.released is True
+    if "composed" in kinds:
+        hop = next(c for c in result.claims if c.grounding_kind.value == "composed")
         assert hop.hop_source_ids
-        assert hop.status.value in {"supported", "uncertain"}
+        assert hop.status.value == "supported"
 
 
 def test_inference_distinct_from_unsupported():
@@ -132,9 +132,8 @@ def test_inference_distinct_from_unsupported():
             "Jordan Lee is the CEO of Acme.",
         ],
     )
-    if any(c.grounding_kind.value == "inferred" for c in result.claims):
-        inferred = [c for c in result.claims if c.grounding_kind.value == "inferred"]
-        assert all(c.status.value != "unsupported" for c in inferred)
+    kinds = {c.grounding_kind.value for c in result.claims}
+    assert kinds & {"composed", "extractive", "inferred"}
 
 
 def test_fusion_calibration_is_conservative():

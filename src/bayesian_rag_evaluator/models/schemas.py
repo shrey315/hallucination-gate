@@ -30,12 +30,14 @@ class GroundingKind(str, Enum):
     """How a claim relates to evidence. Distinct from release status.
 
     extractive — one chunk copies/paraphrases the claim
-    inferred — two+ chunks jointly support it (multi-hop); not a free pass
-    unsupported — no extractive or inferred support
+    composed — AND of extractive facts across 2–3 chunks (releasable)
+    inferred — joint NLI support that is not per-conjunct extractive
+    unsupported — no extractive or composed support
     contradicted — aligned evidence disagrees
     """
 
     EXTRACTIVE = "extractive"
+    COMPOSED = "composed"
     INFERRED = "inferred"
     UNSUPPORTED = "unsupported"
     CONTRADICTED = "contradicted"
@@ -239,6 +241,7 @@ class GoldExample(BaseModel):
     labels: DiscretizedEvidence
     latent_labels: PosteriorScores | None = None
     model_type: ModelType = ModelType.RAG
+    source_reliability: dict[str, float] = Field(default_factory=dict)
 
 
 class LabeledExample(BaseModel):

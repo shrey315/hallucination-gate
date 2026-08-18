@@ -105,15 +105,24 @@ def token_set(text: str) -> set[str]:
 
 
 def content_tokens(text: str) -> set[str]:
-    toks = token_set(text)
-    kept = set()
+    return set(content_token_seq(text)) or token_set(text)
+
+
+def content_token_seq(text: str) -> list[str]:
+    """Ordered content tokens (stopwords dropped). Used for prefix/tail checks."""
+    norm = normalize_text(text)
+    toks = _WORD.findall(norm)
+    if not toks:
+        toks = [ch for ch in norm if not ch.isspace()]
+    out: list[str] = []
     for tok in toks:
-        if tok in STOPWORDS:
+        c = _canonical(tok)
+        if not c or c in STOPWORDS:
             continue
-        if len(tok) <= 2 and not _is_cjk_token(tok):
+        if len(c) <= 2 and not _is_cjk_token(c):
             continue
-        kept.add(tok)
-    return kept or toks
+        out.append(c)
+    return out
 
 
 def token_coverage(claim: str, evidence: str) -> float:
@@ -385,12 +394,34 @@ def _softmax(x):
     return e / e.sum()
 
 
+def _neural_available() -> bool:
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _warn_heuristic_fallback() -> None:
+    import warnings
+
+    warnings.warn(
+        "sentence-transformers is not installed; using heuristic backends. "
+        'Install neural models with: pip install "hallucination-gate[neural]"',
+        UserWarning,
+        stacklevel=3,
+    )
+
+
 def create_embedding_backend(
     use_heuristic: bool = False,
     model_name: str | None = None,
     mode: str | None = None,
 ) -> EmbeddingBackend:
     if use_heuristic:
+        return HeuristicEmbeddingBackend()
+    if not _neural_available():
+        _warn_heuristic_fallback()
         return HeuristicEmbeddingBackend()
     name = model_name or os.getenv("RAG_EVAL_EMBED_MODEL")
     if not name:
@@ -408,6 +439,8 @@ def create_nli_backend(
     mode: str | None = None,
 ) -> NLIBackend:
     if use_heuristic:
+        return HeuristicNLIBackend()
+    if not _neural_available():
         return HeuristicNLIBackend()
     name = model_name or os.getenv("RAG_EVAL_NLI_MODEL")
     if not name:

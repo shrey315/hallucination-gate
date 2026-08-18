@@ -3,13 +3,11 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from bayesian_rag_evaluator.bn.calibration import load_learned_model
 from bayesian_rag_evaluator.bn.discretize import (
     DEFAULT_THRESHOLDS_PATH,
     discretize_evidence,
     load_yaml,
 )
-from bayesian_rag_evaluator.bn.inference import BayesianInferenceEngine
 from bayesian_rag_evaluator.diagnostics.engine import (
     compute_verdict,
     generate_suggestions,
@@ -17,7 +15,11 @@ from bayesian_rag_evaluator.diagnostics.engine import (
 )
 from bayesian_rag_evaluator.evidence.extractor import EvidenceExtractor
 from bayesian_rag_evaluator.gate.engine import apply_gate
-from bayesian_rag_evaluator.models.schemas import EvaluateRequest, EvaluateResponse
+from bayesian_rag_evaluator.models.schemas import (
+    EvaluateRequest,
+    EvaluateResponse,
+    PosteriorScores,
+)
 from bayesian_rag_evaluator.observability import Timer
 from bayesian_rag_evaluator.quality import PolicyProfile, resolve_policy
 
@@ -50,10 +52,10 @@ class DiagnosticEvaluator:
         )
         model = None
         if learned_model_path and learned_model_path.exists():
+            from bayesian_rag_evaluator.bn.calibration import load_learned_model
+
             model = load_learned_model(learned_model_path)
-        self._inference = BayesianInferenceEngine(
-            structure_path=structure_path, model=model
-        )
+        self._inference = _try_bn_engine(structure_path=structure_path, model=model)
 
     def warm(self) -> None:
         self._evidence.warm()
@@ -62,7 +64,9 @@ class DiagnosticEvaluator:
         timer = Timer()
         request_id = str(uuid.uuid4())
         units = self._evidence.store_from_request(request)
-        claims = self._evidence.extract_claims(request.answer, units)
+        claims = self._evidence.extract_claims(
+            request.answer, units, query=request.query
+        )
         scores = self._evidence.extract(
             query=request.query,
             answer=request.answer,
@@ -77,7 +81,16 @@ class DiagnosticEvaluator:
             units=units,
         )
         discretized = discretize_evidence(scores, request.model_type, self._thresholds)
-        posteriors = self._inference.infer(discretized)
+        if self._inference is not None:
+            posteriors = self._inference.infer(discretized)
+        else:
+            posteriors = PosteriorScores(
+                answer_quality=0.5,
+                groundedness=0.5,
+                hallucination_risk=0.5,
+                retrieval_adequacy=0.5,
+                release_safety=0.5,
+            )
         gate = apply_gate(
             original_answer=request.answer,
             claims=claims,
@@ -110,3 +123,12 @@ class DiagnosticEvaluator:
             request_id=request_id,
             latency_ms=round(timer.ms(), 2),
         )
+
+
+def _try_bn_engine(*, structure_path, model):
+    """BN fusion is optional. Claim lock still runs without pgmpy."""
+    try:
+        from bayesian_rag_evaluator.bn.inference import BayesianInferenceEngine
+    except ImportError:
+        return None
+    return BayesianInferenceEngine(structure_path=structure_path, model=model)

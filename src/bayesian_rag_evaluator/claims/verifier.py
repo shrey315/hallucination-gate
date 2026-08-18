@@ -40,6 +40,7 @@ def verify_claims(
     nli: NLIBackend,
     top_k: int = DEFAULT_TOP_K,
     profile: PolicyProfile | None = None,
+    query: str = "",
 ) -> list[ClaimResult]:
     """Ground each claim against individual chunks, then soft-OR aggregate.
 
@@ -141,9 +142,11 @@ def verify_claims(
     for claim, hits, flags in zip(claims, hits_by_claim, flags_by_claim, strict=True):
         result = _aggregate_claim(claim, hits, profile=profile, logic_flags=_unique(flags))
         if result.status in {ClaimVerdict.UNSUPPORTED, ClaimVerdict.UNCERTAIN}:
-            hop = try_multihop(claim, hits, units, nli, profile=profile)
+            hop = try_multihop(
+                claim, hits, units, nli, profile=profile, query=query
+            )
             if hop is not None:
-                result = _from_inferred(claim, hop, hits, profile=profile, logic_flags=_unique(flags))
+                result = _from_hop(claim, hop, hits, profile=profile, logic_flags=_unique(flags))
         results.append(result)
     return results
 
@@ -258,7 +261,7 @@ def _aggregate_claim(
     )
 
 
-def _from_inferred(
+def _from_hop(
     claim: str,
     hop: ChunkHit,
     hits: list[ChunkHit],
@@ -268,28 +271,36 @@ def _from_inferred(
 ) -> ClaimResult:
     hops = [p for p in (hop.source_id or "").split("+") if p]
     all_hits = list(hits) + [hop]
+    composed = (hop.reason or "").startswith("composed")
     if hop.reliability < profile.min_support_reliability:
         status = ClaimVerdict.UNCERTAIN
         reason = (
-            f"Inferred from {' + '.join(hops)} but source reliability "
-            f"{hop.reliability:.2f} is below the release floor."
+            f"{'Composed' if composed else 'Inferred'} from {' + '.join(hops)} but source "
+            f"reliability {hop.reliability:.2f} is below the release floor."
         )
+        kind = GroundingKind.COMPOSED if composed else GroundingKind.INFERRED
+    elif composed:
+        status = ClaimVerdict.SUPPORTED
+        reason = hop.reason or f"Composed from {' + '.join(hops)}."
+        kind = GroundingKind.COMPOSED
     elif profile.allow_inferred_release:
         status = ClaimVerdict.SUPPORTED
         reason = hop.reason or f"Inferred from {' + '.join(hops)}."
+        kind = GroundingKind.INFERRED
     else:
         status = ClaimVerdict.UNCERTAIN
         reason = (
             f"Inferred from {' + '.join(hops)} — not extractive; "
             "strict policy will not release inferred claims."
         )
+        kind = GroundingKind.INFERRED
     return _result_from_hit(
         claim,
         status,
         hop,
         all_hits,
         reason=reason,
-        grounding_kind=GroundingKind.INFERRED,
+        grounding_kind=kind,
         hop_source_ids=hops,
         logic_flags=logic_flags,
     )
