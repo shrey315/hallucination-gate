@@ -1,6 +1,6 @@
 # hallucination-gate
 
-[![PyPI](https://img.shields.io/pypi/v/hallucination-gate.svg)](https://pypi.org/project/hallucination-gate/)
+[![PyPI](https://img.shields.io/pypi/v/hallucination-gate.svg?cacheSeconds=300)](https://pypi.org/project/hallucination-gate/)
 [![Python](https://img.shields.io/pypi/pyversions/hallucination-gate.svg)](https://pypi.org/project/hallucination-gate/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/shrey315/hallucination-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/shrey315/hallucination-gate/actions/workflows/ci.yml)
@@ -17,7 +17,7 @@ Visual architecture (download): [SVG](docs/architecture-visual.svg) · [PNG](doc
 - **Latency budget:** p50 / p95 / p99 / max ceilings
 - **Modes:** `ci` (heuristic smoke) vs `quality` (MiniLM + DeBERTa-small) vs `quality_plus` (mpnet + DeBERTa-base); policies `strict` / `balanced`
 - **Gate:** pass / rewrite / abstain for production `safe_answer`
-- **Lock upgrades:** structured claims, multi-hop *inferred* (not a release in strict), temporal/negation/scope, source reliability, calibrated fusion
+- **Lock upgrades:** structured claims, composed 2–3 hop (strict may pass), inferred NLI-only (strict will not), retrieval-poison abstain, temporal/negation/scope, source reliability
 - **Bench:** `hallucination-gate eval-adversarial` / `eval-benchmark`
 
 Author: **Shreyas G**.

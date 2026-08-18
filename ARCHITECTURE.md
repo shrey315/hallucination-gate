@@ -1,7 +1,7 @@
 # Architecture — hallucination-gate
 
 **Audience:** engineering leadership, integrators, reviewers.
-**Product:** v0.9.2 — conservative grounding firewall for RAG and fine-tuned LLMs.
+**Product:** v0.9.4 — conservative grounding firewall for RAG and fine-tuned LLMs.
 **North star:** do not show the user an answer the supplied evidence cannot support. Prefer abstention over a false release.
 
 This document is the system design, not a tutorial. For install and API snippets, see [README.md](README.md).
@@ -46,7 +46,7 @@ If a design choice conflicts with (2), the design is wrong for this product.
 5. **Dataset-agnostic adapters.** LangChain `Document`, LlamaIndex nodes, dicts, tuples, raw strings — all flatten to `list[str]` via `normalize_context`. No domain lexicon.
 6. **Two quality modes, two policies.** Mode selects backends (heuristic vs neural). Policy selects thresholds. They are orthogonal.
 7. **Fail closed on contradiction.** Any contradicted claim → abstain. Partial support → rewrite iff the remaining text still answers the query.
-8. **Inference is not extractive support.** Multi-hop may *tag* `grounding_kind=inferred`; strict policy will not treat it as a release. Low-reliability sources cannot be the sole SUPPORTED citation.
+8. **Composed ≠ inferred.** Multi-hop AND of extractive conjuncts is `grounding_kind=composed` and **may PASS in strict**. Speculative NLI-only joins stay `inferred`; strict will not release them. Low-reliability sources cannot be the sole SUPPORTED citation.
 
 ---
 
@@ -78,10 +78,10 @@ If a design choice conflicts with (2), the design is wrong for this product.
 | Surface | Entry | Typical consumer |
 |---|---|---|
 | Python SDK | `from hallucination_gate import HallucinationGate, RAGEval` | App code, notebooks |
-| CLI | `hallucination-gate` (`evaluate`, `eval-dataset`, `eval-heldout`, `eval-adversarial`, `eval-benchmark`, `calibrate`) | Local debug, CI |
+| CLI | `hallucination-gate` (`evaluate`, `eval-dataset`, `eval-heldout`, `eval-adversarial`, `eval-corpus`, `eval-benchmark`, `calibrate`) | Local debug, CI |
 | HTTP | FastAPI `api/main.py` — `/v1/answer`, `/evaluate`, `/evaluate/batch` | Sidecar / service |
 
-Public package name is `hallucination-gate`. Internal engine package is `bayesian_rag_evaluator`. The thin public façade is `hallucinate_gate` (re-exported as `hallucination_gate`). Engine modules **must not** import the façade — that cycle is intentional and load-bearing.
+Public package name is `hallucination-gate`. Public SDK is `hallucination_gate`. `hallucinate_gate` is a thin re-export shim. Internal engine package is `bayesian_rag_evaluator`. Engine modules **must not** import the façade — that cycle is intentional and load-bearing.
 
 ---
 
@@ -89,11 +89,11 @@ Public package name is `hallucination-gate`. Internal engine package is `bayesia
 
 ```
 src/
-  hallucination_gate/          preferred public import alias
-  hallucinate_gate/            public SDK
+  hallucination_gate/          public SDK
     gate.py                    HallucinationGate, GatedAnswer
     evidence.py                Evidence / ImageEvidence / TableEvidence
-    eval.py                    RAGEval re-export
+    eval.py                    RAGEval
+  hallucinate_gate/            thin re-export shim
   bayesian_rag_evaluator/      engine (not the public brand)
     evaluator.py               DiagnosticEvaluator — the pipeline
     quality.py                 ci|quality|quality_plus  ×  strict|balanced
@@ -106,7 +106,7 @@ src/
       policy.py                decide_status
       verifier.py              top-k + soft-OR + reliability + multi-hop
       logic.py                 temporal / negation / scope
-      multihop.py              two-chunk inferred support
+      multihop.py              2–3 hop composed (releasable) + inferred (not in strict)
       reliability.py           source_reliability stamp
       fusion.py                calibrated fused_support
     evidence/                  backends, ingest, OCR, align, scorers, multimodal
@@ -155,7 +155,9 @@ HallucinationGate.check(query, answer, context|kb|Evidence)
         │      calibrated fused_support · decide_status per chunk
         │      soft-OR aggregate → ClaimResult
         │      reliability floor: low-trust chunk cannot be sole SUPPORTED
-        │      multi-hop if still unsupported/uncertain → grounding_kind=inferred
+        │      multi-hop if still unsupported/uncertain
+        │        composed (extractive AND) may SUPPORTED in strict
+        │        inferred (NLI-only) stays UNCERTAIN in strict
         │      optional refine_uncertain_claims (LLM judge, off by default)
         │
         ├─ 4. extract() → EvidenceScores
@@ -225,7 +227,7 @@ This is the false-release lock. Neighbor-chunk number clashes cannot sink a clai
 After aggregation:
 
 - If the winning `SUPPORTED` citation has `reliability < min_support_reliability` → downgrade to `UNCERTAIN` (`grounding_kind=extractive`).
-- If still `UNSUPPORTED` or `UNCERTAIN`, `try_multihop` may jointly score two chunks that each contribute unique claim tokens. Success sets `grounding_kind=inferred`. **strict** keeps status `UNCERTAIN` (not a release). **balanced** may mark `SUPPORTED` when `allow_inferred_release=True`.
+- If still `UNSUPPORTED` or `UNCERTAIN`, `try_multihop` may jointly score 2–3 chunks that each contribute unique claim tokens. **Composed** (AND of extractive conjuncts) may be `SUPPORTED` in strict. **Inferred** (joint NLI without per-conjunct cover) stays `UNCERTAIN` in strict; **balanced** may mark `SUPPORTED` when `allow_inferred_release=True`.
 - `grounding_kind` is diagnostic of *how* the claim relates to evidence; gate action still follows `ClaimVerdict`.
 
 ### 7.4 Optional LLM judge
@@ -240,6 +242,9 @@ After aggregation:
 
 ```
 contradicted claims?          → ABSTAIN  (always)
+supported but retrieval_quality < 0.40
+    (query ≥ 2 tokens, not multi-source/composed)
+                              → ABSTAIN  (retrieval-poison / wrong chunk)
 no supported claims?
     balanced + uncertain-only
     + high overlap + answers query
@@ -464,7 +469,7 @@ We do **not** currently: isolate tenant data or models, stream, batch-NLI on GPU
 | Public HTTP returns `safe_answer` only | `/v1/answer` | User-facing clients must not see the raw hallucination |
 | Balanced default in SDK | fewer over-refusals | Strict remains one flag away; contradiction bar unchanged |
 | Optional judge | UNCERTAIN band only | Do not let a chat model become the firewall |
-| Inferred ≠ extractive | Tag multi-hop; strict does not release it | Composition is weaker than a copied chunk |
+| Composed ≠ inferred | Extractive AND across 2–3 hops may release; NLI-only inferred does not in strict | Composition of copied facts is stronger than speculative join |
 | Reliability floor | Downgrade sole low-trust citations | Caller can mark scraped/untrusted sources |
 | BN never ships `safe_answer` | `release_authority=claim_status` on every response | Buyers must not hear “Bayesian = calibrated risk” |
 | Label retrieval failure | `evidence_gap` | Operators can fix the retriever instead of blaming the generator |
@@ -479,8 +484,9 @@ These sit **on the lock**, not in the BN.
 | Capability | Module | Release rule |
 |---|---|---|
 | Structured decomposition | `claims/extractor.py` | Reason/conjunction splits so packed hallucinations can be dropped |
-| Inference vs unsupported | `ClaimResult.grounding_kind` | `inferred` ≠ `unsupported`; strict still will not release inferred |
-| Multi-hop | `claims/multihop.py` | Two hops must each contribute unique claim tokens; union still needs coverage |
+| Inference vs unsupported | `ClaimResult.grounding_kind` | `extractive` / `composed` / `inferred` / `unsupported` / `contradicted`; strict will not release inferred |
+| Multi-hop | `claims/multihop.py` | 2–3 hops each contribute unique claim tokens; composed may PASS in strict |
+| Retrieval poison | `gate/engine.py` | Faithful copy of weakly aligned chunks → ABSTAIN (`evidence_gap=retrieval`) |
 | Temporal / negation / scope | `claims/logic.py` | Clear mismatches raise contradiction; weak topical chunks ignored |
 | Source reliability | `source_reliability` on the request | Below `min_support_reliability` → UNCERTAIN, not SUPPORTED |
 | Calibrated fusion | `claims/fusion.py` + `config/fusion.yaml` | Same weights as before; optional piecewise calibration (never raises scores above evidence) |
@@ -512,8 +518,8 @@ hallucination-gate eval-adversarial
 hallucination-gate eval-benchmark
 ```
 
-See [docs/EVAL.md](docs/EVAL.md) for the snapshot. False-release is the SLO (~0). Over-refusal is published, not hidden. Neural `quality` / `quality_plus` numbers belong in *your* customer set — this package does not claim them from MiniLM smoke tests.
+See [docs/EVAL.md](docs/EVAL.md) for the snapshot. Heuristic **and** neural (`quality`) held-out / adversarial numbers are published. `quality_plus` is unpublished — run it on *your* labels. False-release is the SLO (~0 on heuristic). Over-refusal is published, not hidden. In-repo n=52 is not a customer mix.
 
 ---
 
-*Shreyas G — hallucination-gate v0.9.2. Sole contributor. If a change makes it easier to release an unsupported claim, it is a regression regardless of RAGAS-like averages.*
+*Shreyas G — hallucination-gate v0.9.4. Sole contributor. If a change makes it easier to release an unsupported claim, it is a regression regardless of RAGAS-like averages.*

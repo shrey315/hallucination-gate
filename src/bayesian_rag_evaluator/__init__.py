@@ -8,5 +8,5 @@ This package intentionally does **not** re-export HallucinationGate here, so
 importing engine submodules cannot cycle through the public SDK.
 """
 
-__version__ = "0.9.3"
+__version__ = "0.9.4"
 __all__: list[str] = []

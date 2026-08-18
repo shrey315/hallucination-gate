@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 app = FastAPI(
     title="Hallucination Gate",
-    version="0.9.3",
+    version="0.9.4",
     description=(
         "Conservative grounding sidecar. Claim status decides release; BN scores are "
         "diagnostic fusion, not calibrated P(hallucination). Public /v1/answer returns "
@@ -132,7 +132,7 @@ def health() -> dict[str, str]:
     heuristic = os.getenv("RAG_EVAL_HEURISTIC", "").lower() in {"1", "true", "yes"}
     return {
         "status": "ok",
-        "version": "0.9.3",
+        "version": "0.9.4",
         "backend": "heuristic" if heuristic else "neural",
         "release_authority": "claim_status",
         "scores_are_calibrated": "false",

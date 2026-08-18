@@ -1,4 +1,4 @@
-# Published gate numbers (v0.9.3)
+# Published gate numbers (v0.9.4)
 
 **SLO:** false-release ≈ 0 on the heuristic lock. Over-refusal is an accepted cost.
 

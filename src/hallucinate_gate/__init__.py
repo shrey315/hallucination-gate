@@ -27,7 +27,7 @@ from hallucination_gate import (
     score_retrieval,
 )
 
-__version__ = "0.9.3"
+__version__ = "0.9.4"
 __all__ = [
     "HallucinationGate",
     "GatedAnswer",
