@@ -137,7 +137,7 @@ ev = Evidence.from_image(path="warranty_card.jpg")
 ev = Evidence.from_ocr(path="scanned_policy.pdf")
 ```
 
-## Drawbacks (honest)
+## Drawbacks
 
 - **BN is diagnostic.** `safe_answer` is decided by claim status, not by Bayesian posteriors. Those scores are discrete fusion (`P(high)+0.5·P(medium)`), not calibrated P(hallucination).
 - **Latency & cost** — neural path adds inference time / GPU·CPU load per sample. `quality_plus` is heavier on purpose.
